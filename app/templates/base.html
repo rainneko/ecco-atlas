@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}{{ cfg.SITE_TITLE }}{% endblock %}</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="site">
+  <div class="wrap">
+    <a class="brand" href="/">{{ cfg.SITE_TITLE }}</a>
+    <nav>
+      <a href="/books">Books</a>
+      <a href="/classes">Ornament classes</a>
+      <a href="/agents">Publishers &amp; printers</a>
+      {% if admin %}<a class="pill" href="/admin">Admin</a>
+      <a class="muted" href="/admin/logout">log out</a>{% endif %}
+    </nav>
+  </div>
+</header>
+<main class="wrap">{% block body %}{% endblock %}</main>
+<footer class="site"><div class="wrap">
+  <span>{{ cfg.SITE_SUBTITLE }}</span>
+  <span class="muted">Images served from the project image server; metadata from ECCO / ESTC.</span>
+</div></footer>
+<div id="hovercard" hidden><img alt=""><div class="hc-meta"></div></div>
+<script src="/static/app.js"></script>
+</body></html>

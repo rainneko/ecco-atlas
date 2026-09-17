@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block title %}{{ o.class_path or o.oid }} · {{ cfg.SITE_TITLE }}{% endblock %}
+{% block body %}
+<nav class="crumbs">
+  <a href="/classes">Classes</a> /
+  <a href="/class/superclass/{{ o.superclass }}">{{ o.superclass }}</a> /
+  <a href="/class/subclass/{{ o.subclass }}">{{ o.subclass }}</a>
+  {% if o.variant %}/ <span>variant {{ o.variant }}</span>{% endif %}
+</nav>
+
+<div class="orn-layout">
+  <div class="orn-image">
+    <img src="{{ crop_url(o.oid, 900) }}" alt="ornament {{ o.oid }}">
+    <div class="orn-actions">
+      <a class="btn" href="/img/page/{{ o.oid }}" target="_blank" rel="noopener">Full page image</a>
+      {% if o.book_id and o.page %}
+      <a class="btn ghost" href="{{ viewer_url(o.book_id, o.page) }}" target="_blank" rel="noopener">Open in ECCO viewer</a>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="orn-meta">
+    <h1>{{ o.class_path or '(unclassified)' }}</h1>
+    <table class="kv">
+      <tr><th>Type</th><td><i class="dot" style="background:{{ KIND_COLOR.get(o.kind,'#888') }}"></i>
+          {{ o.kind }} — {{ KIND_LABEL.get(o.kind, o.kind) }}</td></tr>
+      <tr><th>Superclass</th><td><a href="/class/superclass/{{ o.superclass }}">{{ o.superclass or '—' }}</a></td></tr>
+      <tr><th>Subclass</th><td><a href="/class/subclass/{{ o.subclass }}">{{ o.subclass or '—' }}</a></td></tr>
+      <tr><th>Variant</th><td>{% if o.variant %}<a href="/class/variant/{{ o.class_path }}">{{ o.variant }}</a>{% else %}<span class="muted">none</span>{% endif %}</td></tr>
+      <tr><th>Book</th><td><a href="/book/{{ o.book_id }}">{{ (o.full_title or o.book_id)[:90] }}</a></td></tr>
+      <tr><th>Year</th><td>{{ o.year or '?' }}</td></tr>
+      <tr><th>Page</th><td>{{ o.page }} of {{ o.total_pages or '?' }}</td></tr>
+      <tr><th>ESTC</th><td>{{ o.estc_id or '—' }}</td></tr>
+      <tr><th>Publishers</th><td>{{ o.publishers_raw or '—' }}</td></tr>
+      <tr><th>Printers</th><td>{{ o.printers_raw or '—' }}</td></tr>
+      <tr><th>Image id</th><td><code>{{ o.image_id }}</code></td></tr>
+      {% if o.hc_cluster %}<tr><th>Machine cluster</th><td><code>{{ o.hc_column }} = {{ o.hc_cluster }}</code></td></tr>{% endif %}
+      <tr><th>Key</th><td class="muted small"><code>{{ o.image_id }}</code> + <code>[{{ o.box_key }}]</code></td></tr>
+    </table>
+    <p class="small">{% for a in agents %}<a class="chip" href="/agent/{{ a.name }}">{{ a.display_name or a.name }} <i>{{ a.role[:3] }}</i></a>{% endfor %}</p>
+  </div>
+
+  <div class="orn-similar">
+    <h2>Most similar</h2>
+    <p class="muted small">Rule-based for annotated images: same variant 1.00, same
+       subclass 0.98, same superclass 0.90. Will be replaced by embedding cosine
+       similarity once the model is wired in.</p>
+    {% for s in similar %}
+    <figure class="thumb wide">
+      <a href="/ornament/{{ s.oid }}"><img loading="lazy" src="{{ crop_url(s.oid) }}" alt=""></a>
+      <figcaption><b>{{ '%.2f'|format(s.score) }}</b> {{ s.reason }}<br>
+        <span class="muted">{{ s.class_path }} · {{ s.year or '?' }}</span></figcaption>
+    </figure>
+    {% endfor %}
+    <a class="btn block" href="/class/{{ 'variant' if o.variant else 'subclass' }}/{{ o.class_path if o.variant else o.subclass }}">
+      See all images of this kind →</a>
+  </div>
+</div>
+
+<section class="reportbox">
+  <h2>Wrong classification?</h2>
+  {% if request.query_params.get('reported') %}<p class="ok">Thank you — your report is queued for review.</p>{% endif %}
+  <form method="post" action="/ornament/{{ o.oid }}/report" class="reportform">
+    <label>Your name <input name="reporter" placeholder="optional"></label>
+    <label>Suggested superclass <input name="sug_superclass" placeholder="{{ o.superclass }}"></label>
+    <label>Suggested subclass <input name="sug_subclass" placeholder="{{ o.subclass }}"></label>
+    <label>Suggested variant <input name="sug_variant" placeholder="{{ o.variant or '(none)' }}"></label>
+    <label class="full">Why <textarea name="note" rows="2" placeholder="e.g. the chipped corner matches variant c, not a"></textarea></label>
+    <button>Submit report</button>
+  </form>
+</section>
+{% endblock %}

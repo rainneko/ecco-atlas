@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}{{ a.display_name or a.name }} · {{ cfg.SITE_TITLE }}{% endblock %}
+{% block body %}
+<nav class="crumbs"><a href="/agents">Publishers &amp; printers</a> / <span>{{ a.name }}</span></nav>
+<h1>{{ a.display_name or a.name }}</h1>
+<div class="meta">
+  <span><b>Books</b> {{ stats.n_books }}</span>
+  <span><b>Ornaments</b> {{ stats.n_orn }}</span>
+  <span><b>Distinct plates</b> {{ stats.n_plates }}</span>
+  <span><b>Active</b> {{ stats.y0 or '?' }}–{{ stats.y1 or '?' }}</span>
+  {% if stats.as_publisher %}<span class="tag">publisher</span>{% endif %}
+  {% if stats.as_printer %}<span class="tag">printer</span>{% endif %}
+</div>
+
+<h2>Plates used <span class="muted">({{ plates|length }})</span></h2>
+<p class="muted small">Sorted by class id. “Plate” here means the variant level when one
+   exists, otherwise the subclass — i.e. our best guess at a distinct physical block.</p>
+<div class="gallery">
+  {% for p in plates %}
+  <figure class="thumb">
+    <a href="/class/{{ 'variant' if p.variant else 'subclass' }}/{{ p.class_path if p.variant else p.subclass }}">
+      <img loading="lazy" src="{{ crop_url(p.exemplar) }}" alt=""></a>
+    <figcaption><b>{{ p.class_path }}</b><br>
+      <span class="muted">{{ p.n }} imgs · {{ p.n_books }} books · {{ p.y0 }}–{{ p.y1 }}</span>
+    </figcaption>
+  </figure>
+  {% endfor %}
+</div>
+
+<h2>Houses with the most similar stock</h2>
+<p class="muted small">Cosine over idf-weighted plate sets. Sharing a rare plate counts
+   far more than sharing a common one, so a high score suggests shared, borrowed or
+   inherited material rather than mere contemporaneity.</p>
+<ol class="simlist">
+  {% for s in similar %}
+  <li><a href="/agent/{{ s.name }}">{{ s.display_name or s.name }}</a>
+    <span class="muted small">{{ s.n_books }} books</span>
+    <span class="score">{{ '%.3f'|format(s.score or 0) }}</span></li>
+  {% endfor %}
+</ol>
+{% endblock %}

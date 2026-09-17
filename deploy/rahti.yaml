@@ -1,0 +1,232 @@
+# ECCO Ornament Atlas — Rahti (OpenShift 4) manifests
+#
+#   oc apply -f deploy/rahti.yaml
+#
+# Replace PROJECT below with your Rahti project name before applying the Route,
+# or leave host empty and OpenShift will generate <name>-<project>.2.rahtiapp.fi
+# for you (which gets the free wildcard TLS certificate automatically).
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: ecco-secrets
+stringData:
+  POSTGRES_PASSWORD: "CHANGE-ME-db-password"
+  ADMIN_PASSWORD: "CHANGE-ME-admin-password"
+  SECRET_KEY: "CHANGE-ME-random-32-chars"
+  # Assembled from the values above; keep in sync if you change the password.
+  DATABASE_URL: "postgresql://ecco:CHANGE-ME-db-password@ecco-db:5432/ecco"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ecco-config
+data:
+  IMAGE_BASE: "https://oma-sivu.2.rahtiapp.fi/image/"
+  PAGE_VIEWER: "https://onko-sivu.2.rahtiapp.fi/ecco?docId={book_id}&page={page:04d}"
+  SITE_TITLE: "ECCO Ornament Atlas"
+  CACHE_DIR: "/var/cache/ecco"
+  CACHE_MAX_MB: "8000"
+  THUMB_W: "260"
+  WEB_CONCURRENCY: "2"
+
+# ============================================================ PostgreSQL
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ecco-db-data
+spec:
+  accessModes: [ReadWriteOnce]          # standard-csi is RWO: one pod only
+  storageClassName: standard-csi
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ecco-db
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate                      # RWO volume cannot be attached twice
+  selector: { matchLabels: { app: ecco-db } }
+  template:
+    metadata: { labels: { app: ecco-db } }
+    spec:
+      containers:
+        - name: postgresql
+          # This image is built to run under an arbitrary UID, which Rahti requires.
+          # If your cluster does not carry the imagestream, build the pgvector
+          # variant in deploy/postgres-pgvector/ and push it to your own namespace.
+          image: image-registry.openshift-image-registry.svc:5000/openshift/postgresql:16-el9
+          env:
+            - name: POSTGRESQL_USER
+              value: ecco
+            - name: POSTGRESQL_DATABASE
+              value: ecco
+            - name: POSTGRESQL_PASSWORD
+              valueFrom: { secretKeyRef: { name: ecco-secrets, key: POSTGRES_PASSWORD } }
+          ports: [{ containerPort: 5432 }]
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/pgsql/data
+          resources:
+            requests: { cpu: 100m, memory: 512Mi }
+            limits:   { cpu: 1,    memory: 2Gi }
+          readinessProbe:
+            exec: { command: ["/usr/libexec/check-container"] }
+            initialDelaySeconds: 10
+            periodSeconds: 20
+      volumes:
+        - name: data
+          persistentVolumeClaim: { claimName: ecco-db-data }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ecco-db
+spec:
+  selector: { app: ecco-db }
+  ports: [{ port: 5432, targetPort: 5432 }]
+
+# ============================================================ web app
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ecco-cache
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: standard-csi
+  resources:
+    requests:
+      storage: 20Gi
+---
+apiVersion: image.openshift.io/v1
+kind: ImageStream
+metadata:
+  name: ecco-web
+spec:
+  lookupPolicy: { local: true }
+---
+apiVersion: build.openshift.io/v1
+kind: BuildConfig
+metadata:
+  name: ecco-web
+spec:
+  source:
+    type: Git
+    git:
+      uri: https://github.com/YOUR-ORG/ecco-atlas.git   # <- your repo
+      ref: main
+  strategy:
+    type: Docker
+    dockerStrategy:
+      dockerfilePath: Containerfile
+  output:
+    to: { kind: ImageStreamTag, name: "ecco-web:latest" }
+  triggers:
+    - type: ConfigChange
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ecco-web
+  annotations:
+    image.openshift.io/triggers: |
+      [{"from":{"kind":"ImageStreamTag","name":"ecco-web:latest"},
+        "fieldPath":"spec.template.spec.containers[?(@.name==\"web\")].image"}]
+spec:
+  replicas: 1                           # keep at 1 while the crop cache is a RWO PVC
+  strategy:
+    type: Recreate
+  selector: { matchLabels: { app: ecco-web } }
+  template:
+    metadata: { labels: { app: ecco-web } }
+    spec:
+      containers:
+        - name: web
+          image: ecco-web:latest
+          envFrom:
+            - configMapRef: { name: ecco-config }
+          env:
+            - name: DATABASE_URL
+              valueFrom: { secretKeyRef: { name: ecco-secrets, key: DATABASE_URL } }
+            - name: ADMIN_PASSWORD
+              valueFrom: { secretKeyRef: { name: ecco-secrets, key: ADMIN_PASSWORD } }
+            - name: SECRET_KEY
+              valueFrom: { secretKeyRef: { name: ecco-secrets, key: SECRET_KEY } }
+          ports: [{ containerPort: 8080 }]
+          volumeMounts:
+            - name: cache
+              mountPath: /var/cache/ecco
+          resources:
+            requests: { cpu: 200m, memory: 512Mi }
+            limits:   { cpu: 1,    memory: 2Gi }   # keep limit/request ratio <= 5
+          readinessProbe:
+            httpGet: { path: /healthz, port: 8080 }
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          livenessProbe:
+            httpGet: { path: /healthz, port: 8080 }
+            initialDelaySeconds: 40
+            periodSeconds: 30
+      volumes:
+        - name: cache
+          persistentVolumeClaim: { claimName: ecco-cache }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ecco-web
+spec:
+  selector: { app: ecco-web }
+  ports: [{ port: 8080, targetPort: 8080 }]
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: ecco-web
+spec:
+  host: ""                              # empty -> auto <name>-<project>.2.rahtiapp.fi
+  to: { kind: Service, name: ecco-web }
+  port: { targetPort: 8080 }
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+
+# ============================================================ data load job
+# Run once after the CSVs are in place. Easiest path for a first load:
+#   oc rsync ./data ecco-web-<pod>:/tmp/data
+#   oc rsh ecco-web-<pod> python -m etl.load --kind HP /tmp/data/HP.csv ...
+# This Job is the repeatable version once the CSVs live somewhere fetchable.
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ecco-load
+spec:
+  backoffLimit: 1
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: load
+          image: ecco-web:latest
+          command: ["sh", "-c"]
+          args:
+            - |
+              set -e
+              echo "put your CSV fetch here, e.g. curl -o /tmp/HP.csv $HP_URL"
+              python -m etl.load \
+                --kind HP /tmp/HP.csv \
+                --kind DI /tmp/DI.csv \
+                --kind FT /tmp/FT.csv
+          env:
+            - name: DATABASE_URL
+              valueFrom: { secretKeyRef: { name: ecco-secrets, key: DATABASE_URL } }
+          resources:
+            requests: { cpu: 200m, memory: 1Gi }
+            limits:   { cpu: 1,    memory: 4Gi }

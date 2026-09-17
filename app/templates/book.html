@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}{{ (b.full_title or b.book_id)[:60] }} · {{ cfg.SITE_TITLE }}{% endblock %}
+{% block body %}
+<nav class="crumbs"><a href="/books">Books</a> / <span>{{ b.book_id }}</span></nav>
+<h1 class="booktitle">{{ b.full_title or '(untitled)' }}</h1>
+<div class="meta">
+  <span><b>Year</b> {{ b.year or '?' }}</span>
+  <span><b>ESTC</b> {{ b.estc_id or '?' }}</span>
+  <span><b>Pages</b> {{ b.total_pages or '?' }}</span>
+  <span><b>ECCO id</b> {{ b.book_id }}</span>
+  {% if b.is_tonson %}<span class="tag">Tonson / Watts</span>{% endif %}
+</div>
+<div class="imprint">
+  {% if b.publishers_raw %}<p><b>Publishers</b> {{ b.publishers_raw }}</p>{% endif %}
+  {% if b.printers_raw %}<p><b>Printers</b> {{ b.printers_raw }}</p>{% endif %}
+  <p class="small">
+  {% for a in agents %}<a class="chip" href="/agent/{{ a.name }}">{{ a.display_name or a.name }}
+     <i>{{ a.role[:3] }}</i></a>{% endfor %}</p>
+</div>
+
+<h2>Ornaments by page</h2>
+{% set tp = b.total_pages or 1 %}{% set pts = {} %}
+{% for row in strip %}{% set _ = pts.setdefault(row.kind, []).append(
+   {'pct': (row.page / tp * 100) if tp else 0, 'oid': row.first_oid, 'page': row.page, 'n': row.n}) %}{% endfor %}
+{% with book_id=b.book_id, total_pages=tp, points=pts %}{% include "_strip.html" %}{% endwith %}
+
+<h2>All ornaments <span class="muted">({{ orns|length }})</span></h2>
+<div class="gallery">
+  {% for o in orns %}
+  <figure class="thumb">
+    <a href="/ornament/{{ o.oid }}"><img loading="lazy" src="{{ crop_url(o.oid) }}" alt=""></a>
+    <figcaption>
+      <i class="dot" style="background:{{ KIND_COLOR.get(o.kind,'#888') }}"></i>
+      p.{{ o.page }} · <a href="/class/subclass/{{ o.subclass }}">{{ o.subclass or '—' }}</a>{% if o.variant %}<b>{{ o.variant }}</b>{% endif %}
+    </figcaption>
+  </figure>
+  {% endfor %}
+</div>
+
+<h2>Books with the most similar ornament stock</h2>
+<p class="muted small">Cosine similarity over the set of subclasses each book carries,
+   weighted by inverse document frequency — sharing a rare ornament counts for much
+   more than sharing a common one.</p>
+<ol class="simlist">
+  {% for s in similar %}
+  <li><a href="/book/{{ s.book_id }}">{{ (s.full_title or s.book_id)[:100] }}</a>
+    <span class="muted small">{{ s.year or '?' }} · {{ s.n_orn }} ornaments
+      {% if s.is_tonson %}· <span class="tag">Tonson</span>{% endif %}</span>
+    <span class="score">{{ '%.3f'|format(s.score or 0) }}</span></li>
+  {% endfor %}
+</ol>
+{% endblock %}

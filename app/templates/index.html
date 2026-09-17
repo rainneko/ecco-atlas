@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block body %}
+<section class="hero">
+  <h1>{{ cfg.SITE_TITLE }}</h1>
+  <p class="lead">{{ cfg.SITE_SUBTITLE }}. Browse which ornaments appear in which books,
+     compare the variants of a single design, and see which publishers and printers
+     held which stock of blocks.</p>
+  <form class="searchbar" action="/books">
+    <input name="q" placeholder="Search a book title, e.g. fable of" autofocus>
+    <button>Search books</button>
+  </form>
+</section>
+
+<section class="stats">
+  {% for label, val in [("ornaments", stats.n_ornaments), ("books", stats.n_books),
+                        ("publishers / printers", stats.n_agents),
+                        ("superclasses", stats.n_superclass), ("subclasses", stats.n_subclass),
+                        ("with a variant", stats.n_with_variant)] %}
+    <div class="stat"><b>{{ "{:,}".format(val or 0) }}</b><span>{{ label }}</span></div>
+  {% endfor %}
+  <div class="stat"><b>{{ stats.year_min }}–{{ stats.year_max }}</b><span>years covered</span></div>
+</section>
+
+<section class="cards">
+  <a class="card" href="/books"><h3>Books</h3>
+    <p>Fuzzy-search titles. Each row shows the imprint and a page strip marking every
+       page that carries an ornament, coloured by type.</p></a>
+  <a class="card" href="/classes"><h3>Ornament classes</h3>
+    <p>Three levels: superclass → subclass → variant. Every class page shows all its
+       images sorted by year, plus the publisher/printer composition.</p></a>
+  <a class="card" href="/agents"><h3>Publishers &amp; printers</h3>
+    <p>Which plates each house used, and which other houses drew on the same stock.</p></a>
+</section>
+
+<section>
+  <h2>Ornament types</h2>
+  <ul class="kindlist">
+  {% for k in kinds %}
+    <li><i class="dot" style="background:{{ KIND_COLOR.get(k.kind,'#888') }}"></i>
+      <b>{{ k.kind }}</b> — {{ KIND_LABEL.get(k.kind, k.kind) }}
+      <span class="muted">{{ "{:,}".format(k.n) }} images</span></li>
+  {% endfor %}
+  </ul>
+</section>
+{% endblock %}

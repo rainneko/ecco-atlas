@@ -1,0 +1,14 @@
+{% if mix %}
+<div class="mixbar">
+  {% for m in mix %}<span style="width:{{ (m.share*100)|round(2) }}%"
+    title="{{ m.display_name or m.name }} — {{ m.n_books }} books ({{ (m.share*100)|round(1) }}%)"
+    data-i="{{ loop.index0 % 8 }}"></span>{% endfor %}
+</div>
+<ol class="mixlist">
+  {% for m in mix[:8] %}
+  <li><i class="sw" data-i="{{ loop.index0 % 8 }}"></i>
+    <a href="/agent/{{ m.name }}">{{ m.display_name or m.name }}</a>
+    <b>{{ (m.share*100)|round(1) }}%</b><span class="muted">{{ m.n_books }} books</span></li>
+  {% endfor %}
+</ol>
+{% else %}<p class="muted">no imprint data</p>{% endif %}

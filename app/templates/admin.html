@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block body %}
+<h1>Correction queue</h1>
+<nav class="tabs">{% for s in ['open','accepted','rejected','all'] %}
+  <a class="{{ 'on' if status==s }}" href="/admin?status={{ s }}">{{ s }}</a>{% endfor %}</nav>
+{% if not reports %}<p class="muted">Nothing here.</p>{% endif %}
+{% for r in reports %}
+<div class="report">
+  <figure class="thumb"><a href="/ornament/{{ r.oid }}">
+    <img loading="lazy" src="{{ crop_url(r.oid) }}" alt=""></a></figure>
+  <div class="report-body">
+    <div><b>{{ r.class_path or '(unclassified)' }}</b>
+      <span class="muted small">{{ r.kind }} · {{ r.year or '?' }} ·
+      <a href="/book/{{ r.book_id }}">{{ (r.full_title or '')[:60] }}</a></span></div>
+    <div class="diff">
+      <span class="from">{{ r.cur_superclass }}/{{ r.cur_subclass }}{% if r.cur_variant %}/{{ r.cur_variant }}{% endif %}</span>
+      →
+      <span class="to">{{ r.sug_superclass or r.cur_superclass }}/{{ r.sug_subclass or r.cur_subclass }}{% if r.sug_variant %}/{{ r.sug_variant }}{% endif %}</span>
+    </div>
+    {% if r.note %}<p class="note">{{ r.note }}</p>{% endif %}
+    <p class="muted small">by {{ r.reporter or 'anonymous' }} · {{ r.created_at.strftime('%Y-%m-%d %H:%M') }}
+      · status <b>{{ r.status }}</b></p>
+    {% if r.status == 'open' %}
+    <form method="post" action="/admin/report/{{ r.report_id }}" class="inline">
+      <button name="action" value="accept" class="btn">Accept &amp; relabel</button>
+      <button name="action" value="reject" class="btn ghost">Reject</button>
+    </form>{% endif %}
+  </div>
+</div>
+{% endfor %}
+{% endblock %}

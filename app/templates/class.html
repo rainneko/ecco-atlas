@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}{{ value }} · {{ cfg.SITE_TITLE }}{% endblock %}
+{% block body %}
+<nav class="crumbs"><a href="/classes">Classes</a> / <span>{{ level }}</span></nav>
+<h1>{{ value }} <span class="muted">{{ "{:,}".format(total) }} images</span></h1>
+
+<div class="panels">
+  <section class="panel">
+    <h2>Publisher composition</h2>
+    <p class="muted small">Share of the distinct books in this class, by imprint. Counted
+       per book so a thick book cannot skew it.</p>
+    {% include "_mix.html" with context %}
+  </section>
+  <section class="panel">
+    <h2>Printer composition</h2>
+    {% with mix=prns %}{% include "_mix2.html" %}{% endwith %}
+  </section>
+</div>
+
+{% if siblings %}
+<section>
+  <h2>Other branches of the same design</h2>
+  <div class="sibs">
+  {% for s in siblings %}
+    <a class="sib {{ 'on' if s.value == value }}" href="/class/{{ s.level }}/{{ s.value }}">
+      <img loading="lazy" src="/img/class/{{ s.level }}/{{ s.value }}.jpg" alt="">
+      <span>{{ s.value.split('/')[-1] if '/' in s.value else s.value }}</span>
+      <i class="muted">{{ s.n }} imgs · {{ s.y0 or '?' }}–{{ s.y1 or '?' }}</i>
+    </a>
+  {% endfor %}
+  </div>
+</section>
+{% endif %}
+
+<h2>All images, oldest first</h2>
+<div class="gallery">
+  {% for o in rows %}
+  <figure class="thumb">
+    <a href="/ornament/{{ o.oid }}"><img loading="lazy" src="{{ crop_url(o.oid) }}" alt=""></a>
+    <figcaption>
+      <b>{{ o.year or '?' }}</b>{% if o.variant %} · var {{ o.variant }}{% endif %}<br>
+      <a class="muted" href="/book/{{ o.book_id }}">{{ (o.full_title or o.book_id)[:40] }}</a>
+      {% if o.is_tonson %}<span class="tag">T</span>{% endif %}
+    </figcaption>
+  </figure>
+  {% endfor %}
+</div>
+{% if pages > 1 %}<nav class="pager">
+  {% for i in range(1, pages+1) %}<a class="{{ 'on' if i==page_no }}" href="/class/{{ level }}/{{ value }}?p={{ i }}">{{ i }}</a>{% endfor %}
+</nav>{% endif %}
+{% endblock %}

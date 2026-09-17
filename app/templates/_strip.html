@@ -1,0 +1,17 @@
+{# page strip: one row per ornament kind, x axis = page number #}
+<div class="strip" data-book="{{ book_id }}" data-total="{{ total_pages or 1 }}">
+  {% for kind in cfg.KINDS %}
+  <div class="strip-row">
+    <span class="strip-label" title="{{ KIND_LABEL.get(kind, kind) }}">{{ kind }}</span>
+    <div class="strip-track">
+      {% for p in points.get(kind, []) %}
+        <a class="pt" style="left:{{ p.pct }}%;background:{{ KIND_COLOR.get(kind,'#888') }}"
+           href="/ornament/{{ p.oid }}" data-oid="{{ p.oid }}" data-page="{{ p.page }}"
+           data-kind="{{ kind }}" data-n="{{ p.n }}"
+           title="page {{ p.page }} · {{ p.n }} {{ kind }}">{% if p.n > 1 %}<i>{{ p.n }}</i>{% endif %}</a>
+      {% endfor %}
+    </div>
+  </div>
+  {% endfor %}
+  <div class="strip-axis"><span>p.1</span><span>p.{{ total_pages or '?' }}</span></div>
+</div>

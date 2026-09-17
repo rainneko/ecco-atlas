@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Publishers &amp; printers · {{ cfg.SITE_TITLE }}{% endblock %}
+{% block body %}
+<h1>Publishers &amp; printers</h1>
+<p class="lead">Names are normalized to a surname key, because imprint spelling is
+unstable across the corpus — <i>Tonson, J.</i>, <i>Tonson, Jacob</i> and
+<i>J. and R. Tonson</i> are one business.</p>
+<form class="searchbar wide" action="/agents">
+  <input name="q" value="{{ q }}" placeholder="e.g. tonson"><button>Search</button></form>
+<table class="classtable"><thead><tr><th>Name</th><th>books</th></tr></thead><tbody>
+  {% for r in rows %}<tr><td><a href="/agent/{{ r.name }}">{{ r.display_name or r.name }}</a>
+    <span class="muted small">{{ r.name }}</span></td><td>{{ r.n_books }}</td></tr>{% endfor %}
+</tbody></table>
+{% endblock %}

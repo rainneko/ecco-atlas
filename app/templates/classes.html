@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}Ornament classes · {{ cfg.SITE_TITLE }}{% endblock %}
+{% block body %}
+<h1>Ornament classes</h1>
+<p class="lead">Annotation has three levels. A <b>superclass</b> groups designs that share
+a motif; a <b>subclass</b> is one design; a <b>variant</b> distinguishes what we believe
+are separate physical blocks of the same design. Not every subclass has variants.</p>
+<form class="searchbar wide" action="/classes">
+  <select name="level">
+    {% for l in ['superclass','subclass','variant'] %}
+      <option value="{{ l }}" {% if level==l %}selected{% endif %}>{{ l }}</option>{% endfor %}
+  </select>
+  <input name="q" value="{{ q }}" placeholder="filter, e.g. C067 or angel_face">
+  <button>Filter</button>
+</form>
+<table class="classtable">
+  <thead><tr><th></th><th>{{ level }}</th><th>images</th><th>books</th><th>years</th></tr></thead>
+  <tbody>
+  {% for r in rows %}
+  <tr><td class="mini"><img loading="lazy" src="/img/class/{{ level }}/{{ r.value }}.jpg" alt=""></td>
+    <td><a href="/class/{{ level }}/{{ r.value }}">{{ r.value }}</a></td>
+    <td>{{ r.n }}</td><td>{{ r.n_books }}</td>
+    <td class="muted">{{ r.y0 or '?' }}–{{ r.y1 or '?' }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

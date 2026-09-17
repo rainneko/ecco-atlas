@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}Books · {{ cfg.SITE_TITLE }}{% endblock %}
+{% block body %}
+<h1>Books</h1>
+<form class="searchbar wide" action="/books">
+  <input name="q" value="{{ q }}" placeholder="title contains… e.g. fable of">
+  <select name="kind"><option value="">any ornament type</option>
+    {% for k in cfg.KINDS %}<option value="{{ k }}" {% if kind==k %}selected{% endif %}>{{ k }}</option>{% endfor %}
+  </select>
+  <label class="chk"><input type="checkbox" name="tonson" value="1" {% if tonson %}checked{% endif %}> Tonson/Watts only</label>
+  <button>Search</button>
+</form>
+<p class="muted">{{ "{:,}".format(total) }} books{% if q %} matching “{{ q }}”{% endif %}.
+   Hover a dot to preview the ornament, click to open it.</p>
+
+<table class="booktable">
+  <thead><tr><th>Book</th><th>Imprint</th><th class="stripcol">Ornaments by page</th></tr></thead>
+  <tbody>
+  {% for r in rows %}
+  <tr>
+    <td class="titlecell">
+      <a href="/book/{{ r.book_id }}">{{ (r.full_title or '(untitled)')[:120] }}</a>
+      <div class="muted small">{{ r.year or '?' }} · {{ r.estc_id or '' }} ·
+        {{ r.n_orn }} ornaments{% if r.is_tonson %} · <span class="tag">Tonson/Watts</span>{% endif %}</div>
+    </td>
+    <td class="small">
+      {% if r.publishers_raw %}<div><b>Pub.</b> {{ r.publishers_raw[:90] }}</div>{% endif %}
+      {% if r.printers_raw %}<div><b>Pr.</b> {{ r.printers_raw[:90] }}</div>{% endif %}
+      {% if not r.publishers_raw and not r.printers_raw %}<span class="muted">no imprint</span>{% endif %}
+    </td>
+    <td>{% set s = strips[r.book_id] %}{% set tp = r.total_pages or 1 %}
+      {% set pts = {} %}
+      {% for row in s %}{% set _ = pts.setdefault(row.kind, []).append(
+           {'pct': (row.page / tp * 100) if tp else 0, 'oid': row.first_oid,
+            'page': row.page, 'n': row.n}) %}{% endfor %}
+      {% with book_id=r.book_id, total_pages=tp, points=pts %}{% include "_strip.html" %}{% endwith %}
+    </td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+{% if pages > 1 %}
+<nav class="pager">
+  {% for i in range(1, pages+1) %}{% if i<=8 or i==pages %}
+    <a class="{{ 'on' if i==page_no }}" href="/books?q={{ q }}&kind={{ kind }}&tonson={{ tonson }}&p={{ i }}">{{ i }}</a>
+  {% endif %}{% endfor %}
+</nav>
+{% endif %}
+{% endblock %}
