@@ -28,10 +28,10 @@ SITE_TITLE = os.environ.get("SITE_TITLE", "ECCO Ornament Atlas")
 SITE_SUBTITLE = os.environ.get(
     "SITE_SUBTITLE", "Printers' ornaments in Eighteenth Century Collections Online")
 
-KINDS = ["DI", "FT", "HP", "WE"]
+KINDS = ["DI", "FT", "HP", "TP"]
 KIND_LABEL = {"DI": "Decorated initial", "FT": "Factotum", "HP": "Headpiece",
-              "WE": "Woodcut, tailpiece or device"}
-KIND_COLOR = {"DI": "#e8833a", "FT": "#e3c41e", "HP": "#4a9d5f", "WE": "#3d7ea6"}
+              "TP": "Tailpiece or printer's device"}
+KIND_COLOR = {"DI": "#e8833a", "FT": "#e3c41e", "HP": "#4a9d5f", "TP": "#3d7ea6"}
 
 # ---------------------------------------------------------------- data sources
 # One entry per CSV family. Order = display order and load order within a family.
@@ -57,9 +57,9 @@ SOURCES = {
     "FT-pred": dict(kind="FT", family="pred", label="FT prediction",
                     levels=["cluster"], file="FT.csv",
                     status="SimCLR (ResNet-18); re-prediction with MoCo-v3 planned."),
-    "WE-pred": dict(kind="WE", family="pred", label="WE / TP / PD prediction",
-                    levels=["cluster"], file="WETPPD.csv",
-                    status="SimCLR (ResNet-18); woodcuts, tailpieces, printer's devices."),
+    "TP-pred": dict(kind="TP", family="pred", label="TP prediction",
+                    levels=["cluster"], file="TPPD.csv",
+                    status="SimCLR (ResNet-18); tailpieces and printer's devices."),
 }
 ANN_SOURCES = [k for k, v in SOURCES.items() if v["family"] == "ann"]
 PRED_SOURCES = [k for k, v in SOURCES.items() if v["family"] == "pred"]
