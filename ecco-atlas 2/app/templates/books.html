@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% from "_macros.html" import strip, pagerbar %}
+{% block title %}Books · {{ cfg.SITE_TITLE }}{% endblock %}
+{% block body %}
+<h1>Books</h1>
+<form class="searchbar" action="/books" role="search">
+  <label class="sr" for="bq">Title contains</label>
+  <input id="bq" name="q" value="{{ q }}" placeholder="Title contains, e.g. fable of">
+  <select name="kind" aria-label="Ornament type"><option value="">Any ornament type</option>
+    {% for k in cfg.KINDS %}<option value="{{ k }}" {{ 'selected' if kind == k }}>{{ k }}: {{ KIND_LABEL[k] }}</option>{% endfor %}
+  </select>
+  <label class="chk"><input type="checkbox" name="tonson" value="1" {{ 'checked' if tonson }}>Tonson or Watts in the imprint</label>
+  <button>Search</button>
+</form>
+<p class="note">{{ "{:,}".format(total) }} books{% if q %} matching “{{ q }}”{% endif %}. Hover a dot to preview the ornament on that page; click it to open.</p>
+
+<table class="booktable">
+  <thead><tr><th>Book</th><th>Imprint</th><th class="stripcol">Ornaments by page</th></tr></thead>
+  <tbody>
+  {% for r in rows %}
+  <tr>
+    <td class="titlecell">
+      <a href="/book/{{ r.book_id }}">{{ (r.full_title or '(untitled)')[:120] }}</a>
+      <div class="muted small">{{ r.year or 'n.d.' }}{% if r.estc_id %}, ESTC {{ r.estc_id }}{% endif %}, {{ r.n_orn }} ornament{{ '' if r.n_orn == 1 else 's' }}
+        {% if r.is_tonson %}<span class="tag" title="Imprint names Tonson or Watts">T</span>{% endif %}</div>
+    </td>
+    <td class="small">
+      {% if r.publishers_raw %}<div><span class="muted">Publishers</span> {{ r.publishers_raw[:90] }}</div>{% endif %}
+      {% if r.printers_raw %}<div><span class="muted">Printers</span> {{ r.printers_raw[:90] }}</div>{% endif %}
+      {% if not r.publishers_raw and not r.printers_raw %}<span class="muted">No imprint recorded</span>{% endif %}
+    </td>
+    <td>{% set sp = strips[r.book_id] %}{{ strip(sp[0], sp[1]) }}</td>
+  </tr>
+  {% else %}
+  <tr><td colspan="3" class="muted">No titles match. Try fewer words, or a word from the middle of the title.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{{ pagerbar(pager, page_no, base) }}
+{% endblock %}

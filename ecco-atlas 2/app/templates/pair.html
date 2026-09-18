@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% from "_macros.html" import srcboxes, othumb, pagerbar, kdot %}
+{% block title %}{{ A.display_name }} and {{ B.display_name }} · {{ cfg.SITE_TITLE }}{% endblock %}
+{% block body %}
+<nav class="crumbs"><a href="/agents">Publishers and printers</a> / <a href="/agent/{{ A.name }}">{{ A.name }}</a> and <a href="/agent/{{ B.name }}">{{ B.name }}</a></nav>
+<h1><a href="/agent/{{ A.name }}">{{ A.display_name or A.name }}</a> and <a href="/agent/{{ B.name }}">{{ B.display_name or B.name }}</a></h1>
+<div class="meta"><span><b>Shared plates</b>{{ shared|length }}</span><span><b>Co-holding</b>{{ '%.2f'|format(co) }}</span>
+  <span><b>Books naming both</b>{{ n_joint_books }}</span></div>
+<form action="/agents/pair/{{ A.name }}/{{ B.name }}">{{ srcboxes(avail, sel) }}</form>
+
+<h2>Plates both used <small>{{ shared|length }}</small></h2>
+{% if shared %}
+<table>
+  <thead><tr><th></th><th>Plate</th><th class="num">{{ A.name|capitalize }}</th><th class="num">{{ B.name|capitalize }}</th><th class="num">Smaller share</th><th class="num">Books</th><th class="num">Years</th></tr></thead>
+  <tbody>{% for r in shared[:200] %}
+  <tr><td class="mini"><a href="{{ plate_url(r.plate) }}"><img loading="lazy" src="{{ crop_url(r.exemplar) }}" alt=""></a></td>
+    <td>{{ kdot(r.kind) }}<a href="{{ plate_url(r.plate) }}">{{ plate_label(r.plate) }}</a>{% if r.t_owned %} <span class="tag t-own">T</span>{% endif %}</td>
+    <td class="num">{{ pct(r.share_a) }}</td><td class="num">{{ pct(r.share_b) }}</td><td class="num">{{ '%.2f'|format(r.co) }}</td>
+    <td class="num">{{ r.n_books }}</td><td class="num">{{ r.y0 or '?' }}–{{ r.y1 or '?' }}</td></tr>
+  {% endfor %}</tbody>
+</table>
+{% else %}<p class="muted">No plate appears under both houses in the selected data.</p>{% endif %}
+
+<h2>Ornaments in books that name both <small>{{ "{:,}".format(n_joint) }}</small></h2>
+<div class="gallery">{% for o in joint %}{{ othumb(o, 'book') }}{% else %}<p class="muted">No book names both houses.</p>{% endfor %}</div>
+{{ pagerbar(pager, page_no, base) }}
+{% endblock %}

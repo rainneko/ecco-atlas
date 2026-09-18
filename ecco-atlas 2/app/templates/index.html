@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block top %}
+<section class="hero{{ '' if hero else ' plain' }}">
+  {% if hero %}<img class="hero-img" src="/static/hero.jpg"
+       srcset="/static/hero-960.jpg 960w, /static/hero.jpg 1600w" sizes="100vw"
+       alt="An eighteenth-century printing house: compositors at the type case and pressmen inking and pulling a hand press.">{% endif %}
+  <div class="wrap">
+    <h1>{{ cfg.SITE_TITLE }}</h1>
+    <p>Which printers' ornaments appear in which eighteenth-century books, which blocks belonged to which houses, and when a block changed hands.</p>
+    <form class="searchbar" action="/books" role="search">
+      <label class="sr" for="hq">Book title</label>
+      <input id="hq" name="q" placeholder="Search a book title, e.g. fable of the bees">
+      <button>Search books</button>
+    </form>
+  </div>
+  {% if hero %}<span class="hero-credit">{{ cfg.HERO_CREDIT }}</span>{% endif %}
+</section>
+{% if logos %}<div class="partners"><div class="wrap logos">
+  {% for f in logos %}<img src="/static/logos/{{ f }}" alt="{{ f.rsplit('.',1)[0].split('-',1)[-1] }}">{% endfor %}
+</div></div>{% endif %}
+{% endblock %}
+
+{% block body %}
+<p class="lead" style="margin-top:28px">{{ "{:,}".format(summary.n_ornaments or 0) }} ornaments in {{ "{:,}".format(summary.n_books or 0) }} books printed {{ summary.year_min or '?' }}–{{ summary.year_max or '?' }}, from {{ "{:,}".format(summary.n_agents or 0) }} publishers and printers. Human annotations and machine clusters are kept apart throughout, so you can always tell which is which.</p>
+
+<h2>Data in this atlas</h2>
+<table class="datatable">
+  <thead><tr><th>Source</th><th class="num">Ornaments</th><th class="num">Books</th><th>Classes</th><th>Status</th></tr></thead>
+  <tbody>
+  {% for r in sources %}
+  <tr>
+    <td><i class="dot" style="background:{{ KIND_COLOR.get(r.spec.kind) }}"></i>{{ r.spec.label }}
+      <span class="tag fam">{{ 'human' if r.spec.family == 'ann' else 'machine' }}</span></td>
+    <td class="num">{{ "{:,}".format(r.n) }}</td>
+    <td class="num">{{ "{:,}".format(r.n_books) }}</td>
+    <td>{% for c in r.classes %}<a href="/classes?tax={{ r.src }}:{{ c.level }}">{{ c.text }}</a>{{ ', ' if not loop.last }}{% endfor %}</td>
+    <td class="small">{{ r.spec.status }}</td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+<h2>Explore</h2>
+<div class="cards">
+  <a href="/books"><h3>Books</h3><p>Search titles. Each book shows its imprint and a page strip marking every page with an ornament, by type.</p></a>
+  <a href="/classes"><h3>Ornament classes</h3><p>Human classes (superclass, subclass, variant) and machine clusters, each with every image in date order.</p></a>
+  <a href="/agents"><h3>Publishers and printers</h3><p>Which plates each house used and held, and which houses held the same plates.</p></a>
+  <a href="/lending"><h3>Lending</h3><p>Plates held mainly by one house that turn up now and then under another.</p></a>
+</div>
+
+<h2>Ornament types</h2>
+<ul class="kindlist">
+  {% for k in kinds %}<li><i class="dot" style="background:{{ KIND_COLOR.get(k.kind, '#888') }}"></i><b>{{ k.kind }}</b> {{ KIND_LABEL.get(k.kind, k.kind) }} <span class="muted">{{ "{:,}".format(k.n) }}</span></li>{% endfor %}
+</ul>
+{% endblock %}

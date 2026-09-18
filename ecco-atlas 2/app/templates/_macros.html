@@ -1,0 +1,92 @@
+{% macro kdot(kind) %}<i class="dot" style="background:{{ KIND_COLOR.get(kind, '#888') }}" title="{{ KIND_LABEL.get(kind, kind) }}"></i>{% endmacro %}
+
+{% macro srcboxes(avail, sel, button='Update') %}
+<fieldset class="srcbox">
+  <legend>Data included</legend>
+  <input type="hidden" name="srcset" value="1">
+  {% for fam, label in [('ann', 'Human annotation'), ('pred', 'Machine prediction')] %}
+  <div class="grp"><span>{{ label }}</span>
+    {% for s in avail if SOURCES[s].family == fam %}
+    <label class="chk"><input type="checkbox" name="src" value="{{ s }}" {{ 'checked' if s in sel }}>{{ SOURCES[s].label }}</label>
+    {% endfor %}
+  </div>
+  {% endfor %}
+  <div class="foot"><span class="note">Predictions exclude ornaments that already have a human label, so each ornament is counted once.</span>
+    <button class="quiet">{{ button }}</button></div>
+  {% if not sel %}<p class="flash err">Tick at least one source.</p>{% endif %}
+</fieldset>
+{% endmacro %}
+
+{% macro pagerbar(pager, page_no, base) %}
+{% if pager %}<nav class="pager" aria-label="Pages">
+  {% if page_no > 1 %}<a href="{{ base }}&p={{ page_no - 1 }}" rel="prev">Previous</a>{% endif %}
+  {% for i in pager %}{% if i is none %}<span class="gap">…</span>{% else %}
+    <a class="{{ 'on' if i == page_no }}" href="{{ base }}&p={{ i }}">{{ i }}</a>{% endif %}{% endfor %}
+  {% if page_no < pager[-1] %}<a href="{{ base }}&p={{ page_no + 1 }}" rel="next">Next</a>{% endif %}
+</nav>{% endif %}
+{% endmacro %}
+
+{% macro sorth(label, key, sort, desc, base, cls='') %}
+{% set on = sort == key %}
+<th class="{{ cls }}" aria-sort="{{ ('descending' if desc else 'ascending') if on else 'none' }}">
+  <a class="{{ 'on' if on }}" href="{{ base }}&sort={{ key }}&dir={{ 'asc' if on and desc else 'desc' }}">{{ label }}<span class="arrow">{{ ('▼' if desc else '▲') if on else '▽' }}</span></a></th>
+{% endmacro %}
+
+{% macro strip(points, tp) %}
+<div class="strip">
+  {% for kind in cfg.KINDS %}
+  <div class="strip-row">
+    <span class="strip-label" title="{{ KIND_LABEL.get(kind, kind) }}">{{ kind }}</span>
+    <div class="strip-track">
+      {% for p in points.get(kind, []) %}<a class="pt" style="left:{{ '%.2f'|format(p.pct) }}%;background:{{ KIND_COLOR.get(kind) }}"
+         href="/ornament/{{ p.oid }}" data-oid="{{ p.oid }}" data-page="{{ p.page }}" data-kind="{{ kind }}"
+         data-n="{{ p.n }}" data-label="{{ p.label }}" aria-label="page {{ p.page }}, {{ p.n }} {{ kind }}">{% if p.n > 1 %}<i>{{ p.n }}</i>{% endif %}</a>{% endfor %}
+    </div>
+  </div>
+  {% endfor %}
+  <div class="strip-axis"><span>p. 1</span><span>p. {{ tp }}</span></div>
+</div>
+{% endmacro %}
+
+{% macro othumb(o, caption='book', w=None) %}
+<figure class="thumb">
+  <a href="/ornament/{{ o.oid }}"><img loading="lazy" src="{{ crop_url(o.oid, w) }}" alt="{{ o.label or 'ornament' }}"></a>
+  <figcaption>
+    {% if caption == 'book' %}<b>{{ o.year or 'n.d.' }}</b>{% if o.label %} <a href="{{ orn_class_url(o) }}">{{ o.label }}</a>{% endif %}
+      {% if o.is_tonson %}<span class="tag" title="Imprint names Tonson or Watts">T</span>{% endif %}<br>
+      <a class="muted" href="/book/{{ o.book_id }}">{{ (o.full_title or o.book_id)[:48] }}</a>
+    {% elif caption == 'page' %}{{ kdot(o.kind) }}p. {{ o.page }}
+      {% if o.label %}<a href="{{ orn_class_url(o) }}">{{ o.label }}</a>{% else %}<span class="muted">unlabelled</span>{% endif %}
+    {% endif %}
+  </figcaption>
+</figure>
+{% endmacro %}
+
+{% macro plate_thumb(p, share=None) %}
+<figure class="thumb">
+  <a href="{{ plate_url(p.plate) }}"><img loading="lazy" src="{{ crop_url(p.exemplar) }}" alt="{{ plate_label(p.plate) }}"></a>
+  {% if share is not none %}<div class="bar" title="this house appears in {{ pct(share) }} of the plate's books"><i style="width:{{ (100 * share)|round(1) }}%"></i></div>{% endif %}
+  <figcaption>{{ kdot(p.kind) }}<b>{{ plate_label(p.plate) }}</b>
+    {% if p.t_owned %}<span class="tag t-own" title="Tonson or Watts hold the largest share of this plate">T</span>{% endif %}<br>
+    <span class="muted">{{ p.n_books }} book{{ '' if p.n_books == 1 else 's' }}, {{ p.y0 or '?' }}–{{ p.y1 or '?' }}</span>
+  </figcaption>
+</figure>
+{% endmacro %}
+
+{% macro mix(items, owners, borrowers, n_known) %}
+{% if items %}
+<div class="mixbar" role="img" aria-label="credit share">
+  {% for m in items %}<span style="width:{{ (m.credit * 100)|round(2) }}%" data-i="{{ loop.index0 % 8 }}"
+    title="{{ m.display }}: {{ m.n }} books"></span>{% endfor %}
+</div>
+<ol class="mixlist">
+  {% for m in items[:10] %}
+  <li><i class="sw" data-i="{{ loop.index0 % 8 }}"></i>
+    <a href="/agent/{{ m.name }}">{{ m.display }}</a>
+    {% if m.agent_id in owners %}<span class="role owner">owner</span>{% elif m.agent_id in borrowers %}<span class="role borrower">borrower?</span>{% endif %}
+    <span class="n">{{ pct(m.coverage) }}<small>{{ m.n }} of {{ n_known }}</small></span></li>
+  {% endfor %}
+</ol>
+{% if items|length > 10 %}<p class="note">and {{ items|length - 10 }} more</p>{% endif %}
+{% else %}<p class="muted small">No imprint data for these books.</p>{% endif %}
+{% endmacro %}
