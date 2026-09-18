@@ -27,7 +27,7 @@ check 200 "/api/book/$BOOK/strip"
 check 200 "/api/ornament/$ORN"
 check 200 "/api/search/books?q=essay"
 check 200 /classes
-for tax in HP-ann:superclass HP-ann:subclass HP-ann:variant DI-ann:superclass HP-pred:cluster DI-pred:cluster WE-pred:cluster; do
+for tax in HP-ann:superclass HP-ann:subclass HP-ann:variant DI-ann:superclass HP-pred:cluster DI-pred:cluster TP-pred:cluster; do
   check 200 "/classes?tax=$tax&sort=span&dir=asc"
   CL=$(first 'href="/class/[^"]*"' 's/.*href="([^"]*)"/\1/')
   [[ -n "$CL" ]] && check 200 "$CL" && check 200 "$CL?order=group"
