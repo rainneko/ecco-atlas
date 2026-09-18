@@ -1,7 +1,0 @@
-{% extends "base.html" %}
-{% block title %}{{ code }} · {{ cfg.SITE_TITLE }}{% endblock %}
-{% block body %}
-<h1>{{ 'Not found' if code == 404 else ('Not allowed' if code == 403 else 'Something went wrong') }}</h1>
-<p class="lead">{{ detail if detail and detail != 'Not Found' else 'There is no page at this address.' }}</p>
-<p>{% if code == 403 %}<a href="/admin/login">Log in as an admin</a> or {% endif %}<a href="/">go to the front page</a>.</p>
-{% endblock %}
