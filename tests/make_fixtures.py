@@ -7,7 +7,7 @@ generated rows. Planted cases the smoke test checks:
   * plate HP-ann C005/C005_01/a: 10 books, Tonson on 8, one Lintot-only book
     inside Tonson's years (-> "Lending"), one Dodsley-only book 30 years later
     (-> "Later holder?")
-  * WETPPD rows that duplicate HP rows exactly, by IoU ~0.95, and within file
+  * TPPD rows that duplicate HP rows exactly, by IoU ~0.95, and within file
   * HP_concat rows whose boxes are shifted by a pixel (-> attached by IoU)
 """
 import csv
@@ -185,12 +185,12 @@ def main(out):
                          "unique", "", "", ""])
     write(out / "FT_annotation.csv", head, out_rows)
 
-    # ---------------------------------------------------------------- WETPPD.csv (pred)
+    # ---------------------------------------------------------------- TPPD.csv (pred)
     head = ["", "id", "labels", "boxes", "path", "HC0.015", "url", "book_id", "ESTCID",
             "fullTitle", "year", "is_tonson", "publishers", "printers", "ornament_path"]
     rows = []
     k = 0
-    for b in R.sample(bids, 120):                              # genuine WE ornaments
+    for b in R.sample(bids, 120):                              # genuine TP ornaments
         bk = books[b]
         for _ in range(2):
             rows.append([k, image_id(b, R.randint(1, bk["pages"])) + ".TIF", 12,
@@ -210,9 +210,9 @@ def main(out):
                      bk["title"], bk["year"], 0, bk["pubs"], bk["prns"], "/o.jpg"])
         k += 1
     rows += [list(r) for r in rows[:100]]                      # within-file duplicates
-    write(out / "WETPPD.csv", head, rows)
+    write(out / "TPPD.csv", head, rows)
     print(f"fixtures written to {out}: HP {len(hp)}, HP_concat {len(ann_hp) + 31}, DI {len(di)}, "
-          f"WE {len(rows)}")
+          f"TP {len(rows)}")
 
 
 if __name__ == "__main__":
