@@ -3,26 +3,38 @@
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{% block title %}{{ cfg.SITE_TITLE }}{% endblock %}</title>
-<link rel="stylesheet" href="/static/style.css">
+<meta name="description" content="{{ cfg.SITE_SUBTITLE }}: books, ornament classes, publishers and printers.">
+<link rel="preload" href="/static/fonts/libre-caslon-text-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/static/style.css?v=2">
 </head>
 <body>
+{% set path = request.url.path %}
 <header class="site">
   <div class="wrap">
     <a class="brand" href="/">{{ cfg.SITE_TITLE }}</a>
-    <nav>
-      <a href="/books">Books</a>
-      <a href="/classes">Ornament classes</a>
-      <a href="/agents">Publishers &amp; printers</a>
-      {% if admin %}<a class="pill" href="/admin">Admin</a>
-      <a class="muted" href="/admin/logout">log out</a>{% endif %}
+    <nav aria-label="Main">
+      <a href="/books" class="{{ 'on' if path.startswith('/book') }}">Books</a>
+      <a href="/classes" class="{{ 'on' if path.startswith('/class') }}">Ornament classes</a>
+      <a href="/agents" class="{{ 'on' if path.startswith('/agent') }}">Publishers &amp; printers</a>
+      <a href="/lending" class="{{ 'on' if path.startswith('/lending') }}">Lending</a>
+      {% if admin %}<span class="admin">
+        <a href="/admin" class="{{ 'on' if path == '/admin' }}">Admin</a>
+        <a href="/admin/reports" class="{{ 'on' if path.startswith('/admin/reports') }}">Reports{% if n_open %}<span class="count">{{ n_open }}</span>{% endif %}</a>
+        <a class="muted" href="/admin/logout">Log out {{ admin }}</a></span>{% endif %}
     </nav>
   </div>
 </header>
+{% block top %}{% endblock %}
 <main class="wrap">{% block body %}{% endblock %}</main>
 <footer class="site"><div class="wrap">
-  <span>{{ cfg.SITE_SUBTITLE }}</span>
-  <span class="muted">Images served from the project image server; metadata from ECCO / ESTC.</span>
+  <div>
+    <div>{{ cfg.SITE_SUBTITLE }}.</div>
+    <div>Page images from the project image server; bibliographic data from ECCO and ESTC.
+      {% if not admin %}<a class="muted" href="/admin/login">Admin</a>{% endif %}</div>
+  </div>
+  {% if logos %}<div class="logos">{% for f in logos %}<img src="/static/logos/{{ f }}" alt="{{ f.rsplit('.',1)[0].split('-',1)[-1] }}">{% endfor %}</div>{% endif %}
 </div></footer>
 <div id="hovercard" hidden><img alt=""><div class="hc-meta"></div></div>
-<script src="/static/app.js"></script>
+<script src="/static/app.js?v=2"></script>
+{% block scripts %}{% endblock %}
 </body></html>

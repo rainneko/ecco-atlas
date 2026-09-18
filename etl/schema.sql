@@ -1,31 +1,33 @@
--- ECCO Ornament Atlas — schema
--- Phase 1: annotation tables (DI / FT / HP / WE).
--- Phase 2 hooks are marked [FUTURE] and are already present so no migration is needed later.
+-- ECCO Ornament Atlas — schema v2.  See DESIGN.md §3.8.
+-- Derived tables (mv_*) are defined in app/derived.py and rebuilt after each load.
 
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
--- [FUTURE] enable when the pgvector-enabled Postgres image is deployed:
--- CREATE EXTENSION IF NOT EXISTS vector;
+-- [FUTURE] with the pgvector-enabled Postgres image:  CREATE EXTENSION IF NOT EXISTS vector;
+
+CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
 
 -- ---------------------------------------------------------------- books
 CREATE TABLE IF NOT EXISTS book (
     book_id     TEXT PRIMARY KEY,          -- 10-digit ECCO documentID, leading zeros kept
     estc_id     TEXT,
     full_title  TEXT,
-    title_norm  TEXT,                      -- lowercased, punctuation stripped -> fuzzy search
+    title_norm  TEXT,
     year        INTEGER,
     total_pages INTEGER,
     is_tonson   BOOLEAN NOT NULL DEFAULT FALSE,
-    publishers_raw TEXT,                   -- original imprint string, kept for display
+    has_imprint BOOLEAN NOT NULL DEFAULT FALSE,   -- at least one parsed agent
+    publishers_raw TEXT,
     printers_raw   TEXT
 );
-CREATE INDEX IF NOT EXISTS book_title_trgm  ON book USING gin (title_norm gin_trgm_ops);
-CREATE INDEX IF NOT EXISTS book_year_idx    ON book (year);
+CREATE INDEX IF NOT EXISTS book_title_trgm ON book USING gin (title_norm gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS book_year_idx   ON book (year);
+CREATE INDEX IF NOT EXISTS book_estc_idx   ON book (estc_id);
 
 -- ---------------------------------------------------------------- agents
 CREATE TABLE IF NOT EXISTS agent (
     agent_id     SERIAL PRIMARY KEY,
-    name         TEXT UNIQUE NOT NULL,     -- normalized key, e.g. "tonson"
-    display_name TEXT                      -- most frequent surface form, e.g. "Tonson, J."
+    name         TEXT UNIQUE NOT NULL,     -- surname key, e.g. "tonson"
+    display_name TEXT
 );
 CREATE INDEX IF NOT EXISTS agent_name_trgm ON agent USING gin (name gin_trgm_ops);
 
@@ -38,61 +40,127 @@ CREATE TABLE IF NOT EXISTS book_agent (
 CREATE INDEX IF NOT EXISTS book_agent_agent_idx ON book_agent (agent_id);
 
 -- ---------------------------------------------------------------- ornaments
--- PRIMARY KEY is the pair (image_id, box).  oid is a stable hash of that pair,
--- used as a short URL-safe handle.  box_key is the rounded box string that went
--- into the hash, so the natural key stays visible and queryable.
+-- Natural key (image_id, box_key); oid is its short hash. One row carries a
+-- machine label (pred_*) and/or a human label (ann_*). src/plate/label are
+-- derived so every query agrees on them (DESIGN §3.5).
 CREATE TABLE IF NOT EXISTS ornament (
     oid         TEXT PRIMARY KEY,
-    image_id    TEXT NOT NULL,             -- 15 digits, no .TIF  == docId + page + "0"
+    image_id    TEXT NOT NULL,
     box_key     TEXT NOT NULL,
-    x1 DOUBLE PRECISION, y1 DOUBLE PRECISION,
-    x2 DOUBLE PRECISION, y2 DOUBLE PRECISION,
+    x1 DOUBLE PRECISION, y1 DOUBLE PRECISION, x2 DOUBLE PRECISION, y2 DOUBLE PRECISION,
     kind        TEXT NOT NULL,             -- DI | FT | HP | WE
     book_id     TEXT REFERENCES book(book_id) ON DELETE CASCADE,
     page        INTEGER,
+    -- machine label
+    pred_src    TEXT,                      -- HP-pred | DI-pred | FT-pred | WE-pred
+    hc_column   TEXT,                      -- e.g. HC0.12
+    hc_cluster  TEXT,
+    cluster_rejected BOOLEAN NOT NULL DEFAULT FALSE,
+    -- human label
+    ann_src     TEXT,                      -- HP-ann | DI-ann | FT-ann
     superclass  TEXT,
     subclass    TEXT,
-    variant     TEXT NOT NULL DEFAULT '',  -- '' when the class has no variant level
-    class_path  TEXT,                      -- "superclass/subclass/variant" for display + grouping
-    label_src   TEXT,                      -- which CSV / annotation round this came from
-    hc_cluster  TEXT,                      -- [FUTURE] machine cluster id (HC* columns)
-    hc_column   TEXT,                      -- which HC threshold column it came from
+    variant     TEXT NOT NULL DEFAULT '',
+    class_path  TEXT,                      -- levels the source exposes, '/'-joined
+    ann_round   TEXT,                      -- HP_concat "source" column, or file name
+    -- derived
+    src   TEXT GENERATED ALWAYS AS (
+            CASE WHEN ann_src IS NOT NULL AND class_path IS NOT NULL THEN ann_src
+                 WHEN pred_src IS NOT NULL AND hc_cluster IS NOT NULL
+                      AND NOT cluster_rejected THEN pred_src END) STORED,
+    plate TEXT GENERATED ALWAYS AS (
+            CASE WHEN ann_src IS NOT NULL AND class_path IS NOT NULL
+                      THEN ann_src || ':' || class_path
+                 WHEN pred_src IS NOT NULL AND hc_cluster IS NOT NULL
+                      AND NOT cluster_rejected THEN pred_src || ':' || hc_cluster END) STORED,
+    label TEXT GENERATED ALWAYS AS (
+            CASE WHEN ann_src IS NOT NULL AND class_path IS NOT NULL THEN
+                      CASE WHEN position('/' in class_path) > 0
+                           THEN subclass || variant ELSE superclass END
+                 WHEN hc_cluster IS NOT NULL AND NOT cluster_rejected
+                      THEN kind || '-' || hc_cluster END) STORED,
     -- [FUTURE] embedding vector(512),
     UNIQUE (image_id, box_key)
 );
 CREATE INDEX IF NOT EXISTS orn_book_page_idx ON ornament (book_id, page);
-CREATE INDEX IF NOT EXISTS orn_superclass_idx ON ornament (superclass);
-CREATE INDEX IF NOT EXISTS orn_subclass_idx   ON ornament (subclass);
-CREATE INDEX IF NOT EXISTS orn_variant_idx    ON ornament (subclass, variant);
-CREATE INDEX IF NOT EXISTS orn_kind_idx       ON ornament (kind);
-CREATE INDEX IF NOT EXISTS orn_image_idx      ON ornament (image_id);
+CREATE INDEX IF NOT EXISTS orn_image_idx     ON ornament (image_id);
+CREATE INDEX IF NOT EXISTS orn_kind_idx      ON ornament (kind);
+CREATE INDEX IF NOT EXISTS orn_ann_sup_idx   ON ornament (ann_src, superclass);
+CREATE INDEX IF NOT EXISTS orn_ann_sub_idx   ON ornament (ann_src, subclass);
+CREATE INDEX IF NOT EXISTS orn_ann_path_idx  ON ornament (ann_src, class_path);
+CREATE INDEX IF NOT EXISTS orn_pred_idx      ON ornament (pred_src, hc_cluster);
+CREATE INDEX IF NOT EXISTS orn_plate_idx     ON ornament (plate);
 
--- ---------------------------------------------------------------- corrections
+-- annotation keys that were matched to an existing detection by IoU
+CREATE TABLE IF NOT EXISTS ornament_alias (
+    alias_oid TEXT PRIMARY KEY,
+    oid       TEXT NOT NULL REFERENCES ornament(oid) ON DELETE CASCADE
+);
+
+-- formal names (HP Group / Subgroup, previous annotation names)
+CREATE TABLE IF NOT EXISTS class_name (
+    src      TEXT NOT NULL,
+    level    TEXT NOT NULL,
+    value    TEXT NOT NULL,
+    name     TEXT,
+    alt_name TEXT,
+    PRIMARY KEY (src, level, value)
+);
+
+-- annotated crops live in the database (DESIGN §6)
+CREATE TABLE IF NOT EXISTS crop_store (
+    oid        TEXT PRIMARY KEY REFERENCES ornament(oid) ON DELETE CASCADE,
+    full_jpeg  BYTEA NOT NULL,             -- native crop, at most 1400 px wide
+    thumb_jpeg BYTEA NOT NULL,             -- 300 px wide
+    width      INTEGER,
+    fetched_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- ---------------------------------------------------------------- review
 CREATE TABLE IF NOT EXISTS report (
     report_id   SERIAL PRIMARY KEY,
     oid         TEXT NOT NULL REFERENCES ornament(oid) ON DELETE CASCADE,
-    reporter    TEXT,                      -- free-text name/email, optional
-    cur_superclass TEXT, cur_subclass TEXT, cur_variant TEXT,
-    sug_superclass TEXT, sug_subclass TEXT, sug_variant TEXT,
+    reporter    TEXT,
+    cur_label   TEXT,                      -- what the site showed, e.g. C067_01a or DI-8944
+    cur_src     TEXT,
+    suggestion  TEXT,                      -- free text, parsed on accept
     note        TEXT,
-    status      TEXT NOT NULL DEFAULT 'open'   -- open | accepted | rejected
+    status      TEXT NOT NULL DEFAULT 'open'
                 CHECK (status IN ('open', 'accepted', 'rejected')),
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
     resolved_at TIMESTAMPTZ,
-    resolved_by TEXT
+    resolved_by TEXT,
+    resolution  TEXT                       -- the label actually applied
 );
 CREATE INDEX IF NOT EXISTS report_status_idx ON report (status, created_at DESC);
 
--- Every accepted correction is written here before ornament is updated, so the
--- annotation history is never lost and the CSVs can be regenerated.
+-- Every human change (report accept, workbench move, drop, cluster rejection)
+-- is written here before the ornament is updated; the loader replays the
+-- latest change per ornament after every data reload.
 CREATE TABLE IF NOT EXISTS label_change (
     change_id   SERIAL PRIMARY KEY,
     oid         TEXT NOT NULL,
-    report_id   INTEGER REFERENCES report(report_id),
-    old_superclass TEXT, old_subclass TEXT, old_variant TEXT,
-    new_superclass TEXT, new_subclass TEXT, new_variant TEXT,
+    action      TEXT NOT NULL,             -- relabel | drop | reject_cluster
+    report_id   INTEGER,
+    batch_id    TEXT,
+    old_ann_src TEXT, old_superclass TEXT, old_subclass TEXT, old_variant TEXT,
+    new_ann_src TEXT, new_superclass TEXT, new_subclass TEXT, new_variant TEXT,
+    old_cluster_rejected BOOLEAN, new_cluster_rejected BOOLEAN,
     changed_by  TEXT,
     changed_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS label_change_oid_idx ON label_change (oid, changed_at DESC);
+
+CREATE TABLE IF NOT EXISTS lending_review (
+    plate       TEXT NOT NULL,
+    owner_ids   TEXT NOT NULL,             -- sorted agent ids joined by ','
+    borrower_id INTEGER NOT NULL,
+    book_id     TEXT NOT NULL,
+    status      TEXT NOT NULL CHECK (status IN ('confirmed', 'rejected')),
+    note        TEXT,
+    reviewed_by TEXT,
+    reviewed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (plate, owner_ids, borrower_id, book_id)
 );
 
 -- ---------------------------------------------------------------- [FUTURE] uploads
@@ -101,17 +169,13 @@ CREATE TABLE IF NOT EXISTS upload (
     filename    TEXT,
     uploaded_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     status      TEXT NOT NULL DEFAULT 'pending',
-    -- [FUTURE] embedding vector(512),
     note        TEXT
 );
 
--- ---------------------------------------------------------------- helper views
 CREATE OR REPLACE VIEW v_ornament_full AS
 SELECT o.*, b.full_title, b.year, b.estc_id, b.is_tonson,
        b.publishers_raw, b.printers_raw, b.total_pages
 FROM ornament o LEFT JOIN book b USING (book_id);
 
--- document frequency of each subclass, used for idf-weighted similarity
-CREATE OR REPLACE VIEW v_subclass_df AS
-SELECT subclass, COUNT(DISTINCT book_id) AS df
-FROM ornament WHERE subclass IS NOT NULL GROUP BY subclass;
+INSERT INTO meta (key, value) VALUES ('schema_version', '2')
+ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;

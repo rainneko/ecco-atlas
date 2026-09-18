@@ -1,10 +1,11 @@
 # ECCO Ornament Atlas
 
-A project site for browsing printers' ornaments in ECCO: which ornaments appear in
-which books, what the variants of a single design look like, and which publishers
-and printers held which stock of blocks.
+A research site for printers' ornaments in Eighteenth Century Collections
+Online: which ornaments appear in which books, how human classes and machine
+clusters relate, which publishers and printers held which blocks, and when a
+block seems to have been lent.
 
-Full requirements and UI spec: **[DESIGN.md](DESIGN.md)**.
+The full specification is **[DESIGN.md](DESIGN.md)** (v2).
 
 ## Run locally
 
@@ -12,43 +13,57 @@ Full requirements and UI spec: **[DESIGN.md](DESIGN.md)**.
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
-# any Postgres 14+ works; pg_trgm ships with it
-createdb ecco
+createdb ecco                                   # any Postgres 14+
 export DATABASE_URL="postgresql://localhost/ecco"
 export ADMIN_PASSWORD=letmein SECRET_KEY=dev-secret
 
-python -m etl.load \
-    --kind HP data/HP_concat_hp_tonson.csv \
-    --kind DI data/init_3rd_DI202602.csv \
-    --kind FT data/FT_annotations.csv
+python -m etl.load --reset \
+    --src HP-pred data/HP.csv    --src DI-pred data/DI.csv \
+    --src FT-pred data/FT.csv    --src WE-pred data/WETPPD.csv \
+    --src HP-ann  data/HP_concat_annotation.csv \
+    --src DI-ann  data/DI_annotation.csv
+python -m etl.fetch_crops                        # optional: store annotated crops
 
 uvicorn app.main:app --reload --port 8000
 ```
 
-Then open http://localhost:8000.
+No real data at hand? `python -m tests.make_fixtures /tmp/fx` writes all seven
+CSVs in their real layouts, with planted test cases.
 
-`./smoke.sh` starts the server, walks every route including the report/admin
-workflow, and prints the status codes.
+## Updating the data
+
+Re-run `python -m etl.load --src <SOURCE> <file.csv>` for the files that changed
+(add `--replace` when a new model run should replace a source's clusters); the
+loader upserts on image id + box and re-applies every admin correction.
+
+## Tests
+
+```bash
+python -m tests.test_normalize          # parsing rules
+./smoke.sh http://localhost:8000        # every route; admin flows too if ADMIN_PASSWORD is set
+```
 
 ## Layout
 
 ```
-app/normalize.py   parsing + key rules shared by the loader and the site
-app/db.py          every SQL statement in the project
-app/imaging.py     page fetch, crop, disk cache
+app/config.py      sources, thresholds, colours: every tunable in one place
+app/normalize.py   parsing and key rules shared by the loader and the site
+app/db.py          every SQL statement of the web app
+app/derived.py     summary views (plates, shares, class counts) and their refresh
+app/lending.py     ownership and lending analysis
+app/workbench.py   the admin annotation workbench
+app/imaging.py     page fetch, crop, database crop store, LRU disk cache
 app/main.py        routes
 app/templates/     Jinja2 pages
+app/static/        CSS, JS, fonts, hero image, logos/
 etl/schema.sql     tables, indexes, views
-etl/load.py        CSV -> Postgres, idempotent
-deploy/rahti.yaml  Rahti (OpenShift) manifests
+etl/load.py        CSV -> Postgres (idempotent)
+etl/fetch_crops.py bulk fill of the database crop store
+etl/data/          HP superclass names (C001–C172)
+tests/             unit tests and fixture generator
 ```
 
-## Adding a new annotation CSV
+## Logos
 
-Column names differ between files, so only `etl/load.py`'s `ALIASES` map needs a
-new entry. Kind codes are `DI`, `FT`, `HP`, `WE`; add `IO` to `KINDS` in
-`app/config.py` when that data is ready.
-
-## Deploy to Rahti
-
-See the "Deployment" section of DESIGN.md, then `oc apply -f deploy/rahti.yaml`.
+Put the official files in `app/static/logos/` (SVG or PNG). They appear in
+file-name order in the footer and under the front-page hero.

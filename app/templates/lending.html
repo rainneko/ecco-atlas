@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% from "_macros.html" import srcboxes, pagerbar, kdot %}
+{% block title %}Lending · {{ cfg.SITE_TITLE }}{% endblock %}
+{% block body %}
+<h1>Suspected lending</h1>
+<p class="lead">A plate is taken to belong to the house that appears in most of its books. When another house appears in only a few of them, and those books do not also name the owner, the block may have been lent. Timing is shown beside each case: a book inside the owner's years of use points to a loan, a much later one to a sale or transfer.</p>
+
+<form action="/lending" id="lendform">
+  <div class="controls">
+    <label>Owner appears in at least <span class="range"><input type="range" name="owner" min="0.5" max="1" step="0.05" value="{{ p.owner }}"><output>{{ pct(p.owner) }}</output></span></label>
+    <label>Borrower appears in at least <span class="range"><input type="range" name="lo" min="0" max="0.5" step="0.01" value="{{ p.lo }}"><output>{{ pct(p.lo) }}</output></span></label>
+    <label>and at most <span class="range"><input type="range" name="hi" min="0.01" max="0.6" step="0.01" value="{{ p.hi }}"><output>{{ pct(p.hi) }}</output></span></label>
+    <label>Books with a known imprint, at least <span class="range"><input type="range" name="min_books" min="2" max="40" step="1" value="{{ p.min_books }}"><output>{{ p.min_books }}</output></span></label>
+    <label>Year gap still counted as a loan <span class="range"><input type="range" name="gap" min="0" max="30" step="1" value="{{ p.gap }}"><output>{{ p.gap }} yrs</output></span></label>
+  </div>
+  {% if A %}<input type="hidden" name="agent" value="{{ A.name }}">{% endif %}
+  {% if plate %}<input type="hidden" name="plate" value="{{ plate }}">{% endif %}
+  {{ srcboxes(avail, sel, 'Apply') }}
+</form>
+{% if A or plate %}<p>Showing only {% if A %}cases involving <a href="/agent/{{ A.name }}">{{ A.display_name }}</a>{% endif %}{% if plate %} plate <a href="{{ plate_url(plate) }}">{{ plate_label(plate) }}</a>{% endif %}.
+  <a href="/lending?{{ p.as_query() }}{{ '&' ~ sq if sq }}">Show all</a></p>{% endif %}
+
+<p><b>{{ "{:,}".format(n_events) }}</b> book{{ '' if n_events == 1 else 's' }} on <b>{{ "{:,}".format(n_plates) }}</b> plate{{ '' if n_plates == 1 else 's' }}.
+  {% for k, n in counts.items() if n %}<span class="verdict {{ k }}">{{ VERDICTS[k][0] }} {{ n }}</span> {% endfor %}
+  <a class="small" href="/lending.csv?{{ qs }}">Download as CSV</a></p>
+
+<table class="lend-events">
+  <thead><tr><th></th><th>Plate</th><th>Owner</th><th>Borrower</th><th>Book</th><th class="num">Year</th><th>Owner's years</th><th>Timing</th>{% if admin %}<th>Review</th>{% endif %}</tr></thead>
+  <tbody>
+  {% for e in events %}
+  {% set rv = reviews.get((e.plate, e.owner_ids, e.borrower, e.book_id)) %}
+  <tr>
+    <td class="mini"><a href="{{ plate_url(e.plate) }}"><img loading="lazy" src="{{ crop_url(e.info.exemplar) }}" alt=""></a></td>
+    <td class="nowrap">{{ kdot(e.info.kind) }}<a href="{{ plate_url(e.plate) }}">{{ plate_label(e.plate) }}</a>{% if e.info.t_owned %} <span class="tag t-own">T</span>{% endif %}
+      <div class="muted small">{{ e.n_known }} books</div></td>
+    <td>{% for o in e.owners %}<a href="/agent/{{ ag[o].name }}">{{ ag[o].display_name }}</a> <span class="muted small">{{ pct(e.owner_shares[loop.index0]) }}</span>{{ ' + ' if not loop.last }}{% endfor %}</td>
+    <td><a href="/agent/{{ ag[e.borrower].name }}">{{ ag[e.borrower].display_name }}</a> <span class="muted small">{{ pct(e.borrower_share) }}</span></td>
+    <td><a href="/book/{{ e.book_id }}">{{ (e.title or e.book_id)[:60] }}</a></td>
+    <td class="num">{{ e.year or '–' }}</td>
+    <td class="nowrap">{{ e.owner_span[0] or '?' }}–{{ e.owner_span[1] or '?' }}</td>
+    <td><span class="verdict {{ e.verdict }}" title="{{ VERDICTS[e.verdict][1] }}{% if e.gap_median is not none %}; {{ e.gap_median|round|int }} years from the owner's median year{% endif %}">{{ VERDICTS[e.verdict][0] }}</span>{% if e.gap %} <span class="muted small">{{ e.gap }} yrs</span>{% endif %}
+      {% if rv %}<div class="small {{ 'muted' }}">{{ rv.status }} by {{ rv.reviewed_by }}</div>{% endif %}</td>
+    {% if admin %}<td class="nowrap"><form method="post" action="/admin/lending/review" class="inline">
+      <input type="hidden" name="plate" value="{{ e.plate }}"><input type="hidden" name="owner_ids" value="{{ e.owner_ids }}">
+      <input type="hidden" name="borrower_id" value="{{ e.borrower }}"><input type="hidden" name="book_id" value="{{ e.book_id }}">
+      <input type="hidden" name="back" value="{{ request.url.path }}?{{ request.url.query }}">
+      <button class="quiet" name="status" value="confirmed" title="Confirm this loan">Confirm</button>
+      <button class="quiet" name="status" value="rejected" title="Not a loan">Reject</button>
+      {% if rv %}<button class="quiet" name="status" value="clear">Clear</button>{% endif %}</form></td>{% endif %}
+  </tr>
+  {% else %}<tr><td colspan="9" class="muted">No plate meets these thresholds. Lower the owner share or widen the borrower band.</td></tr>{% endfor %}
+  </tbody>
+</table>
+{{ pagerbar(pager, page_no, base) }}
+{% endblock %}

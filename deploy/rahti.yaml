@@ -1,5 +1,10 @@
 # ECCO Ornament Atlas — Rahti (OpenShift 4) manifests
 #
+# NOTE: reference only. The live project (visual-search) was set up in the web
+# console and differs: web Deployment "ecco-atlas", database Deployment
+# "postgresql" (openshift/postgresql:15-el8, PVC "postgresql"), env vars set by
+# hand. Nothing here needs applying for v2; see DESIGN.md §2 and §10.
+#
 #   oc apply -f deploy/rahti.yaml
 #
 # Replace PROJECT below with your Rahti project name before applying the Route,
@@ -200,7 +205,7 @@ spec:
 # ============================================================ data load job
 # Run once after the CSVs are in place. Easiest path for a first load:
 #   oc rsync ./data ecco-web-<pod>:/tmp/data
-#   oc rsh ecco-web-<pod> python -m etl.load --kind HP /tmp/data/HP.csv ...
+#   oc rsh ecco-web-<pod> python -m etl.load --src HP-pred /tmp/data/HP.csv ...
 # This Job is the repeatable version once the CSVs live somewhere fetchable.
 ---
 apiVersion: batch/v1
@@ -221,9 +226,10 @@ spec:
               set -e
               echo "put your CSV fetch here, e.g. curl -o /tmp/HP.csv $HP_URL"
               python -m etl.load \
-                --kind HP /tmp/HP.csv \
-                --kind DI /tmp/DI.csv \
-                --kind FT /tmp/FT.csv
+                --src HP-pred /tmp/HP.csv  --src DI-pred /tmp/DI.csv \
+                --src FT-pred /tmp/FT.csv  --src WE-pred /tmp/WETPPD.csv \
+                --src HP-ann /tmp/HP_concat_annotation.csv \
+                --src DI-ann /tmp/DI_annotation.csv
           env:
             - name: DATABASE_URL
               valueFrom: { secretKeyRef: { name: ecco-secrets, key: DATABASE_URL } }

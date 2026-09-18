@@ -1,31 +1,35 @@
 {% extends "base.html" %}
+{% block title %}Admin · {{ cfg.SITE_TITLE }}{% endblock %}
 {% block body %}
-<h1>Correction queue</h1>
-<nav class="tabs">{% for s in ['open','accepted','rejected','all'] %}
-  <a class="{{ 'on' if status==s }}" href="/admin?status={{ s }}">{{ s }}</a>{% endfor %}</nav>
-{% if not reports %}<p class="muted">Nothing here.</p>{% endif %}
-{% for r in reports %}
-<div class="report">
-  <figure class="thumb"><a href="/ornament/{{ r.oid }}">
-    <img loading="lazy" src="{{ crop_url(r.oid) }}" alt=""></a></figure>
-  <div class="report-body">
-    <div><b>{{ r.class_path or '(unclassified)' }}</b>
-      <span class="muted small">{{ r.kind }} · {{ r.year or '?' }} ·
-      <a href="/book/{{ r.book_id }}">{{ (r.full_title or '')[:60] }}</a></span></div>
-    <div class="diff">
-      <span class="from">{{ r.cur_superclass }}/{{ r.cur_subclass }}{% if r.cur_variant %}/{{ r.cur_variant }}{% endif %}</span>
-      →
-      <span class="to">{{ r.sug_superclass or r.cur_superclass }}/{{ r.sug_subclass or r.cur_subclass }}{% if r.sug_variant %}/{{ r.sug_variant }}{% endif %}</span>
-    </div>
-    {% if r.note %}<p class="note">{{ r.note }}</p>{% endif %}
-    <p class="muted small">by {{ r.reporter or 'anonymous' }} · {{ r.created_at.strftime('%Y-%m-%d %H:%M') }}
-      · status <b>{{ r.status }}</b></p>
-    {% if r.status == 'open' %}
-    <form method="post" action="/admin/report/{{ r.report_id }}" class="inline">
-      <button name="action" value="accept" class="btn">Accept &amp; relabel</button>
-      <button name="action" value="reject" class="btn ghost">Reject</button>
-    </form>{% endif %}
-  </div>
+<h1>Admin</h1>
+<div class="statgrid">
+  <section class="panel"><h3>Reports</h3>
+    <p><a href="/admin/reports">{{ n_open }} open suggestion{{ '' if n_open == 1 else 's' }}</a> waiting for review.</p></section>
+  <section class="panel"><h3>Workbench</h3>
+    <form action="/admin/workbench" class="inline">
+      <select name="tax" aria-label="Classification">{% for o in wb %}<option value="{{ o.src }}:{{ o.level }}">{{ SOURCES[o.src].label }}, {{ o.level }}</option>{% endfor %}</select>
+      <input name="value" placeholder="e.g. C067 or 8944" size="12" required><button>Open</button>
+    </form>
+    {% if wb_err %}<p class="flash err">Choose a classification and type a class id.</p>{% endif %}
+    <p class="note">Or use the “Open in the workbench” button on any class page.</p></section>
+  <section class="panel"><h3>Summary tables</h3>
+    <p class="small">Last rebuilt {{ meta.get('derived_at', 'never') }}{% if meta.get('derived_refreshing') == '1' %}; <b>refreshing now</b>{% endif %}.</p>
+    <form method="post" action="/admin/refresh"><button class="quiet">Refresh now</button></form></section>
+  <section class="panel"><h3>Images</h3>
+    <p class="small">{{ "{:,}".format(crops.stored) }} of {{ "{:,}".format(crops.annotated) }} annotated crops stored in the database ({{ crops.size }}).<br>
+      {{ lru }} of {{ cfg.CACHE_MAX_ITEMS }} other crops in the disk cache.</p>
+    <p class="note">Fill the store with <code>python -m etl.fetch_crops</code>.</p></section>
 </div>
-{% endfor %}
+
+<h2>Recent changes</h2>
+<table>
+  <thead><tr><th>When</th><th>Who</th><th>What</th><th>Ornament</th><th>From</th><th>To</th></tr></thead>
+  <tbody>{% for c in changes %}
+  <tr><td class="small nowrap">{{ c.changed_at.strftime('%Y-%m-%d %H:%M') }}</td><td class="small">{{ c.changed_by }}</td>
+    <td class="small">{{ c.action.replace('_', ' ') }}{% if c.report_id %} (report {{ c.report_id }}){% endif %}</td>
+    <td class="small"><a href="/ornament/{{ c.oid }}">{{ c.label or c.oid }}</a></td>
+    <td class="small">{{ c.old_ann_src or '' }} {{ c.old_superclass or '' }}{% if c.old_subclass %}/{{ c.old_subclass }}{{ c.old_variant }}{% endif %}{% if c.old_cluster_rejected %} (cluster rejected){% endif %}</td>
+    <td class="small">{{ c.new_ann_src or '' }} {{ c.new_superclass or '' }}{% if c.new_subclass %}/{{ c.new_subclass }}{{ c.new_variant }}{% endif %}{% if not c.new_ann_src and not c.new_cluster_rejected %}<span class="muted">no human label</span>{% endif %}{% if c.new_cluster_rejected %} (cluster rejected){% endif %}</td></tr>
+  {% else %}<tr><td colspan="6" class="muted">No changes yet.</td></tr>{% endfor %}</tbody>
+</table>
 {% endblock %}

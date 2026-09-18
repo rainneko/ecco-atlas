@@ -1,14 +1,23 @@
 {% extends "base.html" %}
-{% block title %}Publishers &amp; printers · {{ cfg.SITE_TITLE }}{% endblock %}
+{% from "_macros.html" import srcboxes, sorth %}
+{% block title %}Publishers and printers · {{ cfg.SITE_TITLE }}{% endblock %}
 {% block body %}
-<h1>Publishers &amp; printers</h1>
-<p class="lead">Names are normalized to a surname key, because imprint spelling is
-unstable across the corpus — <i>Tonson, J.</i>, <i>Tonson, Jacob</i> and
-<i>J. and R. Tonson</i> are one business.</p>
-<form class="searchbar wide" action="/agents">
-  <input name="q" value="{{ q }}" placeholder="e.g. tonson"><button>Search</button></form>
-<table class="classtable"><thead><tr><th>Name</th><th>books</th></tr></thead><tbody>
-  {% for r in rows %}<tr><td><a href="/agent/{{ r.name }}">{{ r.display_name or r.name }}</a>
-    <span class="muted small">{{ r.name }}</span></td><td>{{ r.n_books }}</td></tr>{% endfor %}
-</tbody></table>
+<h1>Publishers and printers</h1>
+<p class="lead">Names are reduced to a surname, because imprint spelling varies so much: <i>Tonson, J.</i>, <i>Tonson, Jacob</i> and <i>J. and R. Tonson</i> are one business here. The price is that two different people with one surname are merged.</p>
+<form action="/agents">
+  <div class="searchbar"><input name="q" value="{{ q }}" placeholder="Surname, e.g. tonson"><button>Search</button></div>
+  {{ srcboxes(avail, sel) }}
+</form>
+{% set base = '/agents?q=' ~ (q|urlencode) ~ ('&' ~ sq if sq else '') %}
+<table>
+  <thead><tr>{{ sorth('House', 'name', sort, desc, base) }}<th>Role</th>
+    {{ sorth('Books', 'books', sort, desc, base, 'num') }}
+    {{ sorth('Plates used', 'plates', sort, desc, base, 'num') }}
+    {{ sorth('Plates owned', 'owned', sort, desc, base, 'num') }}</tr></thead>
+  <tbody>{% for r in rows %}
+  <tr><td><a href="/agent/{{ r.name }}{{ '?' ~ sq if sq }}">{{ r.display_name or r.name }}</a> <span class="muted small">{{ r.name }}</span></td>
+    <td class="small muted">{{ (r.roles or '').replace(',', ', ') }}</td>
+    <td class="num">{{ r.n_books }}</td><td class="num">{{ r.n_plates }}</td><td class="num">{{ r.n_owned }}</td></tr>
+  {% else %}<tr><td colspan="5" class="muted">No house matches “{{ q }}”.</td></tr>{% endfor %}</tbody>
+</table>
 {% endblock %}
