@@ -80,9 +80,9 @@ is unresolved (a failed fetch shows a grey placeholder, never an error page).
 | `DI-pred` | `DI.csv` (`DI_202608.csv`) | DI | machine, MoCo-v3 | ~57k | `HC0.12` | cluster |
 | `FT-pred` | `FT.csv` | FT | machine, SimCLR | ~113k | `HC0.03` | cluster |
 | `HP-pred` | `HP.csv` (`HP_group1.csv`) | HP | machine, SimCLR | ~200k | `HC0.04` | cluster |
-| `WE-pred` | `WETPPD.csv` | WE | machine, SimCLR | — | `HC0.015` | cluster |
+| `TP-pred` | `TPPD.csv` | TP | machine, SimCLR | — | `HC0.015` | cluster |
 
-`WE` covers woodcut engravings, tailpieces and printer's devices as one kind.
+`TP` covers tailpieces and printer's devices as one kind. (An earlier `WE` kind also covered woodcut illustrations; those were dropped as not relevant to publishing history, and the file was renamed `TPPD.csv` accordingly.)
 The `HC<threshold>` column name differs per file; the loader finds it by prefix
 and records which one it used (`hc_column`), so the site can say
 "`DI-8944` (HC0.12)".
@@ -141,26 +141,26 @@ page     = int(image_id[10:14])
 
 1. same `oid` exists → attach the human label to that row;
 2. otherwise, a row on the same page (`image_id`) whose box has **IoU ≥ 0.9**
-   (same kind first, else a `WE` row) → attach, and record the annotation's own
+   (same kind first, else a `TP` row) → attach, and record the annotation's own
    key in `ornament_alias` so a link built from the annotation CSV still resolves;
 3. otherwise → insert a new ornament that has a human label and no cluster.
 
 The loader prints the three counts, so a drift between the annotation and
 prediction boxes shows up immediately.
 
-### 3.4 De-duplication of `WETPPD.csv`
+### 3.4 De-duplication of `TPPD.csv`
 
-The WE file contains many detections that are also in the HP (and other) files.
+The TP file contains many detections that are also in the HP (and other) files.
 The loader applies your procedure, in order, after the other prediction files
 are in the database:
 
 1. drop exact duplicates **within** the file (`id + boxes`, keep first);
-2. drop WE rows whose key already exists in **another** source;
-3. drop WE rows with **IoU ≥ 0.9** against any other ornament on the same page
-   (`--we-iou`, default 0.9).
+2. drop TP rows whose key already exists in **another** source;
+3. drop TP rows with **IoU ≥ 0.9** against any other ornament on the same page
+   (`--tp-iou`, default 0.9).
 
 Before step 3 it prints the IoU histogram (bins 0 / .5 / .8 / .9 / .95 / .99 / 1)
-so the threshold can be chosen from the data. Across the non-WE files, a key
+so the threshold can be chosen from the data. Across the non-TP files, a key
 that appears in two sources keeps the first-loaded kind (order DI, FT, HP) and
 the collision count is printed.
 
@@ -431,8 +431,8 @@ and:
   page;
 - pager with previous / next and a window around the current page.
 
-**Page strip** (kept): four rows DI / FT / HP / WE, colours
-DI `#e8833a`, FT `#e3c41e`, HP `#4a9d5f`, WE `#3d7ea6`; a count above a dot when a
+**Page strip** (kept): four rows DI / FT / HP / TP, colours
+DI `#e8833a`, FT `#e3c41e`, HP `#4a9d5f`, TP `#3d7ea6`; a count above a dot when a
 page carries more than one; dots are links; one shared lazy hover card.
 
 ### 5.3 `/book/{id}` — Book detail
@@ -466,7 +466,7 @@ One selector with two groups:
 
 ```
 Human annotation   HP · superclass | HP · subclass | HP · variant | DI · superclass | FT · superclass
-Machine prediction DI clusters (HC0.12) | FT clusters | HP clusters | WE clusters
+Machine prediction DI clusters (HC0.12) | FT clusters | HP clusters | TP clusters
 ```
 
 Only sources with data are listed. The filter box also matches formal names
@@ -508,7 +508,7 @@ Legacy v1 URLs `/class/subclass/C067_01` redirect to `/class/HP-ann/…`.
 
 ```
 [x] HP annotation  [x] DI annotation  [x] FT annotation
-[x] HP prediction  [x] DI prediction  [x] FT prediction  [x] WE prediction
+[x] HP prediction  [x] DI prediction  [x] FT prediction  [x] TP prediction
     Predictions exclude ornaments that already have a human label, so each
     ornament is counted once.
 ```
@@ -585,7 +585,7 @@ superclass (or HP subclass), **including a machine cluster such as `DI-8944`**.
   already given to members (so after saving and reloading, the images you just
   labelled appear in their own section instead of snapping back). New buckets
   create **human labels** (e.g. `DI-ann` superclass `B_Lion`); the images stay
-  in the machine cluster. Drop marks `cluster_rejected`. WE clusters have no
+  in the machine cluster. Drop marks `cluster_rejected`. TP clusters have no
   human-label source yet, so they offer Drop only.
 - A new bucket named after a class elsewhere (e.g. `C006_01` inside the C005
   workbench) moves the images into that class; the page says so.
@@ -720,7 +720,7 @@ where model quality becomes visible to the team.
    ```
    python -m etl.load --reset \
        --src HP-pred /tmp/data/HP.csv   --src DI-pred /tmp/data/DI.csv \
-       --src FT-pred /tmp/data/FT.csv   --src WE-pred /tmp/data/WETPPD.csv \
+       --src FT-pred /tmp/data/FT.csv   --src TP-pred /tmp/data/TPPD.csv \
        --src HP-ann  /tmp/data/HP_concat_annotation.csv \
        --src DI-ann  /tmp/data/DI_annotation.csv
    python -m etl.fetch_crops          # optional, fills crop_store
@@ -753,6 +753,6 @@ where model quality becomes visible to the team.
    beyond ordering.
 6. **FT annotation** (85–90% accuracy) — load now as `FT-ann` with a warning in
    its status line, or wait for the review?
-7. **WE IoU threshold** — choose from the histogram the loader prints.
+7. **TP IoU threshold** — choose from the histogram the loader prints.
 8. **Agent disambiguation** — surname keys merge different people; an ESTC
    person authority list would fix this.
