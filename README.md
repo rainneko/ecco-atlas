@@ -19,7 +19,7 @@ export ADMIN_PASSWORD=letmein SECRET_KEY=dev-secret
 
 python -m etl.load --reset \
     --src HP-pred data/HP.csv    --src DI-pred data/DI.csv \
-    --src FT-pred data/FT.csv    --src WE-pred data/WETPPD.csv \
+    --src FT-pred data/FT.csv    --src TP-pred data/TPPD.csv
     --src HP-ann  data/HP_concat_annotation.csv \
     --src DI-ann  data/DI_annotation.csv
 python -m etl.fetch_crops                        # optional: store annotated crops
