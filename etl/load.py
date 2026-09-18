@@ -3,12 +3,12 @@
 
     python -m etl.load \
         --src HP-pred data/HP.csv   --src DI-pred data/DI.csv \
-        --src FT-pred data/FT.csv   --src WE-pred data/WETPPD.csv \
+        --src FT-pred data/FT.csv   --src TP-pred data/TPPD.csv \
         --src HP-ann  data/HP_concat_annotation.csv \
         --src DI-ann  data/DI_annotation.csv
 
 Whatever order you give, sources load as: predictions (DI, FT, HP), then
-annotations (which attach to the prediction rows), then WE predictions (which
+annotations (which attach to the prediction rows), then TP predictions (which
 are de-duplicated against everything else). Re-running upserts on id+boxes.
 
 Flags
@@ -20,7 +20,7 @@ Flags
     --names FILE     formal HP names: the 'Subclass_id: ...' text list or a CSV
     --books FILE     extra book metadata (book_id or ESTCID, year, publishers,
                      printers, fullTitle) to fill gaps; never overwrites
-    --we-iou 0.9     IoU above which a WE box duplicates another box
+    --tp-iou 0.9     IoU above which a TP box duplicates another box
     --ann-iou 0.9    IoU above which an annotation box is the same detection
     --no-replay      do not re-apply admin corrections after loading
     --no-derived     skip rebuilding the summary views
@@ -72,19 +72,41 @@ def log(msg):
 
 
 # =============================================================== reading
+def _norm_col(name) -> str:
+    return re.sub(r"\s+", " ", str(name).strip()).lower()
+
+
 def read_source(path: Path, src: str) -> pd.DataFrame:
     spec = config.SOURCES[src]
     header = list(pd.read_csv(path, nrows=0).columns)
-    want = {c for names in ALIASES.values() for c in names}
+    # Column names differ in case and stray whitespace between files that
+    # otherwise share a layout (e.g. "boxes" vs "Boxes "), so match loosely
+    # and remember the real header spelling for each alias we accept.
+    by_norm = {}
+    for h in header:
+        by_norm.setdefault(_norm_col(h), h)
+    want_norm = {_norm_col(c) for names in ALIASES.values() for c in names}
     hc_cols = [c for c in header if str(c).upper().startswith("HC")]
-    cols = [c for c in header if c in want] + hc_cols[:1]
+    cols = [by_norm[n] for n in want_norm if n in by_norm] + hc_cols[:1]
     df = pd.read_csv(path, dtype=str, usecols=cols, keep_default_na=True, low_memory=False)
+    df.columns = [_norm_col(c) if c not in hc_cols else c for c in df.columns]
 
     def pick(field):
         for c in ALIASES[field]:
-            if c in df.columns:
-                return df[c]
+            if _norm_col(c) in df.columns:
+                return df[_norm_col(c)]
         return pd.Series([None] * len(df), index=df.index, dtype=object)
+
+    def require_found(field):
+        """id and boxes are load-bearing: if the column is entirely absent
+        from the header, every row will look 'unparseable' and the real
+        problem (a column-name mismatch) is easy to miss. Fail loudly instead."""
+        if not any(_norm_col(c) in df.columns for c in ALIASES[field]):
+            sys.exit(f"{path}: no '{field}' column found (looked for "
+                     f"{ALIASES[field]}). Columns in the file: {header}")
+
+    require_found("id")
+    require_found("boxes")
 
     out = pd.DataFrame(index=df.index)
     out["image_id"] = pick("id").map(lambda v: N.image_id_of(v) if isinstance(v, str) else None)
@@ -96,6 +118,9 @@ def read_source(path: Path, src: str) -> pd.DataFrame:
             f"{int((bad_box & ~bad_id).sum())} with an unparseable box")
     keep = ~bad_id & ~bad_box
     out, boxes, df = out[keep].copy(), boxes[keep], df[keep].copy()
+    if out.empty:
+        sys.exit(f"{path}: every row was dropped (bad id or unparseable box) — "
+                 f"nothing left to load. Columns in the file: {header}")
     out[["x1", "y1", "x2", "y2"]] = pd.DataFrame(boxes.tolist(), index=out.index)
     out["box_key"] = boxes.map(N.box_key)
     out["oid"] = [N.make_oid(i, b) for i, b in zip(out["image_id"], boxes)]
@@ -264,8 +289,8 @@ def iou_sql(a, b):
             f"greatest(0, least({a}.y2,{b}.y2) - greatest({a}.y1,{b}.y1)), 0)")
 
 
-def load_we(conn, df, src, replace, thresh):
-    """WETPPD overlaps heavily with the other files (DESIGN §3.4)."""
+def load_tp(conn, df, src, replace, thresh):
+    """TPPD overlaps heavily with the other files (DESIGN §3.4)."""
     cur = conn.cursor()
     if replace:
         cur.execute("""UPDATE ornament SET pred_src = NULL, hc_column = NULL, hc_cluster = NULL,
@@ -289,7 +314,7 @@ def load_we(conn, df, src, replace, thresh):
     ious = np.array([r[0] for r in cur.fetchall()], dtype=float)
     if len(ious):
         hist, _ = np.histogram(ious, bins=bins)
-        log("  IoU of WE boxes vs other boxes on the same page (IoU > 0):")
+        log("  IoU of TP boxes vs other boxes on the same page (IoU > 0):")
         for lo, hi, n in zip(bins[:-1], bins[1:], hist):
             log(f"    [{lo:.2f}, {min(hi, 1):.2f})  {n:,}")
     cur.execute("DELETE FROM _in t USING _iou i WHERE i.oid = t.oid AND i.iou >= %s", (thresh,))
@@ -320,11 +345,11 @@ def load_ann(conn, df, src, replace, thresh):
                                            "class_path", "ann_round"])
     cur.execute("UPDATE _in t SET target = t.oid FROM ornament o WHERE o.oid = t.oid")
     n_exact = cur.rowcount
-    # IoU fallback: same page, same kind preferred, else a WE detection
+    # IoU fallback: same page, same kind preferred, else a TP detection
     cur.execute(f"""
         SELECT t.oid, o.oid, {iou_sql('t', 'o')} AS iou, (o.kind = t.kind) AS same
         FROM _in t JOIN ornament o ON o.image_id = t.image_id
-        WHERE t.target IS NULL AND (o.kind = t.kind OR o.kind = 'WE')""")
+        WHERE t.target IS NULL AND (o.kind = t.kind OR o.kind = 'TP')""")
     pairs = [p for p in cur.fetchall() if p[2] is not None and p[2] >= thresh]
     pairs.sort(key=lambda p: (not p[3], -p[2]))
     used, assign = set(), {}
@@ -355,7 +380,7 @@ def load_ann(conn, df, src, replace, thresh):
     cur.execute("""UPDATE ornament o SET ann_src = %s, superclass = t.superclass,
                        subclass = t.subclass, variant = coalesce(t.variant, ''),
                        class_path = t.class_path, ann_round = t.ann_round,
-                       kind = CASE WHEN o.kind = 'WE' THEN t.kind ELSE o.kind END
+                       kind = CASE WHEN o.kind = 'TP' THEN t.kind ELSE o.kind END
                    FROM _in t WHERE o.oid = t.target""", (src,))
     log(f"  attached by exact key: {n_exact:,}   by IoU >= {thresh}: {len(assign):,}   "
         f"new detections: {n_new:,}")
@@ -518,7 +543,7 @@ def main():
     ap.add_argument("--force-reset", action="store_true")
     ap.add_argument("--names", type=Path)
     ap.add_argument("--books", type=Path)
-    ap.add_argument("--we-iou", type=float, default=0.9)
+    ap.add_argument("--tp-iou", type=float, default=0.9)
     ap.add_argument("--ann-iou", type=float, default=0.9)
     ap.add_argument("--no-replay", action="store_true")
     ap.add_argument("--no-derived", action="store_true")
@@ -544,7 +569,7 @@ def main():
     log("schema ok")
 
     t0 = time.time()
-    order = sorted(jobs, key=lambda j: (j[0] == "WE-pred",
+    order = sorted(jobs, key=lambda j: (j[0] == "TP-pred",
                                         FAMILY_ORDER[config.SOURCES[j[0]]["family"]],
                                         list(config.SOURCES).index(j[0])))
     for src, path in order:
@@ -552,8 +577,8 @@ def main():
         log(f"[{src}] {path}")
         df = read_source(path, src)
         log(f"  parsed rows: {len(df):,}")
-        if src == "WE-pred":
-            load_we(conn, df, src, a.replace, a.we_iou)
+        if src == "TP-pred":
+            load_tp(conn, df, src, a.replace, a.tp_iou)
         elif config.SOURCES[src]["family"] == "pred":
             load_pred(conn, df, src, a.replace)
         else:
