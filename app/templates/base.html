@@ -7,21 +7,21 @@
 <link rel="preload" href="/static/fonts/libre-caslon-text-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/static/style.css?v=2">
 </head>
-<body>
+<body class="{{ 'home' if request.url.path == '/' else '' }}">
 {% set path = request.url.path %}
 <header class="site">
   <div class="wrap">
     <a class="brand" href="/">{{ cfg.SITE_TITLE }}</a>
     <nav aria-label="Main">
-      <a href="/books" class="{{ 'on' if path.startswith('/book') }}">Books</a>
-      <a href="/classes" class="{{ 'on' if path.startswith('/class') }}">Ornament classes</a>
-      <a href="/agents" class="{{ 'on' if path.startswith('/agent') }}">Publishers &amp; printers</a>
-      <a href="/lending" class="{{ 'on' if path.startswith('/lending') }}">Lending</a>
-      <a href="/reprints" class="{{ 'on' if path.startswith('/reprints') }}">Reprints</a>
-      <a href="/search/image" class="{{ 'on' if path.startswith('/search') }}">Image search</a>
-      <a href="/about" class="{{ 'on' if path.startswith('/about') }}">About</a>
+      <a data-label="Books" href="/books" class="{{ 'on' if path.startswith('/book') }}">Books</a>
+      <a data-label="Ornament classes" href="/classes" class="{{ 'on' if path.startswith('/class') }}">Ornament classes</a>
+      <a data-label="Publishers &amp; printers" href="/agents" class="{{ 'on' if path.startswith('/agent') }}">Publishers &amp; printers</a>
+      <a data-label="Lending" href="/lending" class="{{ 'on' if path.startswith('/lending') }}">Lending</a>
+      <a data-label="Reprints" href="/reprints" class="{{ 'on' if path.startswith('/reprints') }}">Reprints</a>
+      <a data-label="Image search" href="/search/image" class="{{ 'on' if path.startswith('/search') }}">Image search</a>
+      <a data-label="About" href="/about" class="{{ 'on' if path.startswith('/about') }}">About</a>
       {% if admin %}<span class="admin">
-        <a href="/admin" class="{{ 'on' if path == '/admin' }}">Admin</a>
+        <a data-label="Admin" href="/admin" class="{{ 'on' if path == '/admin' }}">Admin</a>
         <a href="/admin/reports" class="{{ 'on' if path.startswith('/admin/reports') }}">Reports{% if n_open %}<span class="count">{{ n_open }}</span>{% endif %}</a>
         <a class="muted" href="/admin/logout">Log out {{ admin }}</a></span>{% endif %}
     </nav>

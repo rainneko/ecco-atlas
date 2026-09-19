@@ -167,6 +167,12 @@ class Engine:
 
     # ---- status
     def status(self):
+        # not ready yet: retry in the background at most every 30 s, so that
+        # tables or embeddings loaded after start-up are picked up (§9.4)
+        if self.extractor is None and not self._loading and \
+                time.time() - getattr(self, "_last_try", 0) > 30:
+            self._last_try = time.time()
+            self.warmup()
         return dict(model_loaded=self.extractor is not None, loading=self._loading,
                     model=self.model_name, dim=self.emb["dim"] if self.emb else None,
                     n_vectors=self.emb["n"] if self.emb else 0, error=self.error,
@@ -186,11 +192,16 @@ class Engine:
         threading.Thread(target=self._safe_load, name="embed-warmup", daemon=True).start()
 
     def _safe_load(self):
+        self._last_try = time.time()
         try:
             self.ensure_loaded()
         except Exception as e:  # noqa: BLE001
-            self.error = str(e)
-            log.warning("image search unavailable: %s", e)
+            msg = str(e)
+            if "does not exist" in msg and "relation" in msg:
+                msg = ("No embeddings have been loaded yet (run python -m etl.load, then "
+                       "etl.load_model and etl.load_embeddings).")
+            self.error = msg
+            log.warning("image search unavailable: %s", msg.splitlines()[0])
 
     def ensure_loaded(self):
         with self.lock:

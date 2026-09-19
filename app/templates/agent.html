@@ -21,7 +21,7 @@
 <nav class="tabs">
   <a class="{{ 'on' if view == 'used' }}" href="?view=used{{ q }}">Plates used ({{ n_used }})</a>
   <a class="{{ 'on' if view == 'owned' }}" href="?view=owned{{ q }}">Plates owned ({{ n_owned }})</a>
-  {{ help('plate') }}
+  <span class="tabs-help">{{ help('plate') }}</span>
 </nav>
 {% if view == 'owned' %}
 <p class="note">A house owns a plate when it appears in a larger share of the plate's books than any other house, counting only plates with at least {{ cfg.OWNER_MIN_BOOKS }} books whose imprint is known. Publishers and printers are counted together, because the imprint does not say who held the block.

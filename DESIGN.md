@@ -17,6 +17,7 @@ book-search cost (§4.7), and small layout changes (§5.2).
 | Upload an ornament and find its class and house | New `/search/image` (§9): model checkpoint stored in Postgres, embeddings loaded from four per-type files, CPU inference, a four-stage progress bar, kind confirmation, cluster ranking, house estimate. |
 | Places of publication | `book.place` from an ESTC export loaded with `--places`; place composition on class pages; subclass-versus-subclass place contrast; book-pair reprint list; cluster links from embeddings (§12). Every place feature degrades to "no place data" when the file was never loaded. |
 | Front page too modest; glossary; publications; people | §13. |
+| v2.1.1 (2026-09-20): header, `?` icon, About text, book-pair titles, file upload | §8 header, §9.4 status, §10 upload steps, §12.4, §13.2. |
 | Imprint names clickable; sortable book list | §5.2. |
 
 ### 0.2 v1 → v2.0
@@ -755,6 +756,20 @@ narrow measure (`max-width: 62ch` inside a `70ch` block), which wrapped after a
 word like "which". v2 uses a 68ch measure, `text-wrap: pretty` (keeps a lone word
 off the last line), and keeps each sentence on one source line.
 
+**Header (v2.1.1).** On every page except the front page the site header is
+ink (`#1c1a17`) with white links; the front page keeps the light header above
+its dark hero. The current page and the hovered link are shown the same way —
+**bold, white**, no underline (v2.1 underlined the hover *and* marked the
+current page with a red underline: two different lines for two states). Bold
+text is wider than regular, so each link reserves its bold width (a hidden
+bold copy of its label) and the row does not shift when the pointer moves.
+
+**Help icons.** The `?` circle is styled with a selector more specific than
+any container rule (`span.help > a`), so it keeps its shape inside tab rows,
+table headers and panels — in v2.1 the tab-row style turned it into a pill on
+the house page. It sits outside the tab row there. Inline tags and help icons
+inside a sentence get 3–4 px of space on each side.
+
 Other fixes: composition bar no longer overflows (credit share); report form
 no longer shows current values as greyed placeholders that look like input;
 long class names wrap at underscores instead of mid-word; visible keyboard focus
@@ -907,6 +922,12 @@ upload ─▶ embed ─▶ type check ─▶ (confirm) ─▶ rank classes ─�
    default centroid-first mode answers the same question for a fraction of
    the memory.
 
+The engine's readiness is **re-checked**: a status request while the model is
+not loaded retries loading in the background at most every 30 s, so tables
+created or embeddings loaded after the pod started are picked up without a
+restart, and a missing table is reported as "no embeddings have been loaded",
+not as a database error.
+
 Steps 4–6 are re-run when the user changes the type; results are cached in
 `<token>.json` so the result page is server-rendered and shareable.
 
@@ -996,6 +1017,23 @@ uses `min_matches_super=1` while `docret.eval.uap` uses 2 — inert today
    ```
    `--reset` still refuses to drop a database that holds reports or label
    changes unless `--force-reset` is given.
+   **Getting files into the pod.** The web pod's filesystem is the container's
+   own: everything under `/tmp` disappears when the pod is replaced (every
+   build, every change of resources). Copy files in right before loading
+   them, load, then delete them:
+   ```
+   oc get pods                                   # the ecco-atlas-xxxxx-yyyyy name
+   oc rsync ./data/ ecco-atlas-xxxxx-yyyyy:/tmp/data/   # a folder
+   oc cp ./model.ckpt ecco-atlas-xxxxx-yyyyy:/tmp/data/model.ckpt   # one file
+   ```
+   ("rsync not available in container" is a warning: `oc rsync` falls back to
+   tar and still copies.) Large files — the checkpoint, the four
+   `emb_*.npz` (~350 MB together) — one at a time, deleting each after its
+   load (`oc exec <pod> -- rm /tmp/data/<file>`), to stay inside the pod's
+   disk allowance. Nothing loaded into Postgres is lost when the pod goes.
+   With `WEB_CONCURRENCY=2` each of the two workers holds its own copy of the
+   model and centroids (~0.6 GB each); if the pod is OOMKilled, set
+   `WEB_CONCURRENCY=1`.
 3. **Environment variables**: none required. Optional, in the `ecco-atlas`
    Deployment's environment settings:
    - `ADMIN_USERS` = `alice:pw1,bob:pw2` for personal admin passwords;
@@ -1107,7 +1145,9 @@ whether their places differ. To keep the pair count bounded, only plates found
 in ≤ 30 books generate pairs (a plate in 1,000 books would alone generate
 500,000 pairs and says nothing about a specific relationship). Shown:
 
-- on the book page, the "similar books" list gains the place and a
+- on the book page, a table "Shares several plates with": the other book's
+  **title** (linked; the ECCO id small underneath), year, place, shared plates,
+  Jaccard and the tag; the "similar books" list gains the place and a
   **different place** tag;
 - `/reprints`: the pairs, different-place pairs first, sorted by shared plates;
   each row shows both titles, years, places and the shared plates as
@@ -1181,7 +1221,9 @@ to the full entry on `/about`. Implemented as a `help(term)` macro reading
 works on the sortable tables and inside panels.
 
 `/about` carries the full definitions supplied by the annotation guideline —
-printers' ornaments (device PD, headpiece HP, tailpiece TP, border, other),
+printers' ornaments (device PD, headpiece HP, tailpiece TP; "border" and
+"other printer's ornament" are not listed, since neither is a type in the
+atlas; the device entry says that devices and tailpieces form one type, TP),
 illustrations (woodcut/engraving, frontispiece, other), initials (decorative
 DI, factotum FT), library stamps — and states the assumption the whole site
 rests on: **an ornament block was a physical asset of a printing or publishing

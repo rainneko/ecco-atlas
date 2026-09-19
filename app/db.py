@@ -1021,7 +1021,10 @@ def shared_plates(pairs, per_pair=6):
 
 
 def book_pairs_for(book_id, limit=10):
-    return q("""SELECT p.*, CASE WHEN p.a = %(b)s THEN p.b ELSE p.a END AS other
-                FROM mv_book_pair p WHERE p.a = %(b)s OR p.b = %(b)s
+    return q("""SELECT p.*, o.book_id AS other, o.full_title AS other_title, o.year AS other_year,
+                       o.place AS other_place, o.false_imprint AS other_fi
+                FROM mv_book_pair p
+                JOIN book o ON o.book_id = CASE WHEN p.a = %(b)s THEN p.b ELSE p.a END
+                WHERE p.a = %(b)s OR p.b = %(b)s
                 ORDER BY p.diff_place DESC, p.shared DESC LIMIT %(lim)s""",
              {"b": book_id, "lim": limit})

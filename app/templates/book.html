@@ -28,10 +28,11 @@
 <p class="note">Book pairs sharing at least {{ cfg.PAIR_MIN_SHARED }} plates that are each found in at most {{ cfg.PAIR_MAX_PLATE_BOOKS }} books. A pair printed in different places is a candidate reprint or copy. <a href="/reprints">All pairs</a>.</p>
 <table>
   <thead><tr><th>Book</th><th class="num">Year</th><th>Place</th><th class="num">Shared</th><th class="num">Jaccard</th><th></th></tr></thead>
-  <tbody>{% for p in pairs %}{% set other = p.other %}
-  <tr><td><a href="/book/{{ other }}">{{ other }}</a></td>
-    <td class="num">{{ (p.year_b if p.a == b.book_id else p.year_a) or '–' }}</td>
-    <td>{{ (p.place_b if p.a == b.book_id else p.place_a) or '–' }}</td>
+  <tbody>{% for p in pairs %}
+  <tr><td><a href="/book/{{ p.other }}">{{ (p.other_title or '(untitled)')[:100] }}</a>
+      <div class="muted small">ECCO {{ p.other }}{% if p.other_fi %} <span class="tag">false imprint</span>{% endif %}</div></td>
+    <td class="num">{{ p.other_year or '–' }}</td>
+    <td>{{ p.other_place or '–' }}</td>
     <td class="num">{{ p.shared }}</td><td class="num">{{ p.jaccard }}</td>
     <td>{% if p.diff_place %}<span class="verdict later">different place</span>{% endif %}</td></tr>{% endfor %}</tbody>
 </table>

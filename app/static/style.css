@@ -47,8 +47,21 @@ header.site .wrap{display:flex;align-items:center;gap:24px;min-height:56px;flex-
 .brand{font-family:var(--serif);font-size:18px;color:var(--ink)}
 .brand:hover{text-decoration:none}
 header nav{margin-left:auto;display:flex;gap:18px;align-items:center;font-size:14px;flex-wrap:wrap}
-header nav a{color:var(--ink-2)}
-header nav a.on{color:var(--ink);box-shadow:inset 0 -2px 0 var(--rubric)}
+header nav a{color:var(--ink-2);display:inline-flex;flex-direction:column;align-items:center}
+header nav a:hover{text-decoration:none}
+/* reserve the bold width so the row does not shift on hover */
+header nav a::after{content:attr(data-label);font-weight:700;height:0;overflow:hidden;visibility:hidden}
+header nav a.on{color:var(--ink);font-weight:700}
+header nav a:hover{font-weight:700;color:var(--ink)}
+/* inner pages: ink header, white links (the front page keeps the light header) */
+body:not(.home) header.site{background:var(--ink);border-bottom-color:var(--ink)}
+body:not(.home) header.site .brand{color:#fff}
+body:not(.home) header nav a{color:rgba(255,255,255,.78)}
+body:not(.home) header nav a.on,body:not(.home) header nav a:hover{color:#fff}
+body:not(.home) header nav .admin{border-left-color:rgba(255,255,255,.25)}
+body:not(.home) header nav a.muted{color:rgba(255,255,255,.55)}
+body:not(.home) header .brand:hover{color:#fff}
+body:not(.home) header :focus-visible{outline-color:#fff}
 header nav .admin{display:flex;gap:12px;align-items:center;padding-left:14px;border-left:1px solid var(--rule)}
 .count{display:inline-block;min-width:18px;padding:0 5px;border-radius:9px;background:var(--rubric);
   color:#fff;font-size:11px;text-align:center;line-height:18px;margin-left:3px}
@@ -87,15 +100,16 @@ footer .wrap{display:flex;justify-content:space-between;gap:20px;flex-wrap:wrap;
 .partners .wrap{display:flex;gap:26px;align-items:center;padding-top:14px;padding-bottom:14px;flex-wrap:wrap}
 
 /* ---------------------------------------------------------------- help tooltips (§13.2) */
-.help{position:relative;display:inline-block;margin-left:3px;vertical-align:1px}
-.help > a{display:inline-block;width:15px;height:15px;border-radius:50%;border:1px solid var(--rule-2);
+.help{position:relative;display:inline-block;margin:0 2px 0 4px;vertical-align:1px}
+.note .tag,.lead .tag,p .tag{margin:0 3px}
+span.help > a{padding:0;line-height:13px;box-shadow:none;display:inline-block;width:15px;height:15px;border-radius:50%;border:1px solid var(--rule-2);
   color:var(--muted);font:600 10px/13px var(--sans);text-align:center;background:#fff;text-decoration:none}
 .help:hover > a,.help:focus-within > a{border-color:var(--rubric);color:var(--rubric)}
 .help .tip{display:none;position:absolute;left:50%;bottom:calc(100% + 8px);transform:translateX(-50%);
   width:260px;padding:8px 10px;background:var(--ink);color:#fff;font:400 12.5px/1.45 var(--sans);
   border-radius:var(--r);box-shadow:0 6px 20px rgba(0,0,0,.18);z-index:40;text-align:left;white-space:normal}
 .help .tip::after{content:"";position:absolute;top:100%;left:50%;margin-left:-6px;border:6px solid transparent;border-top-color:var(--ink)}
-.help .tip .more{display:block;margin-top:4px;color:#f3d9d0;font-size:11.5px}
+.help .tip .more{display:block;margin-top:4px;color:#f3d9d0;font-size:11.5px;padding:0;border:0;background:none;border-radius:0}
 .help:hover .tip,.help:focus-within .tip{display:block}
 th .help{font-weight:400}
 
@@ -180,6 +194,7 @@ tr.sub td{border-bottom-color:transparent}
 .tabs{display:flex;gap:6px;margin:12px 0 16px;flex-wrap:wrap}
 .tabs a{padding:5px 12px;border:1px solid var(--rule-2);border-radius:99px;font-size:13px;background:#fff;color:var(--ink-2)}
 .tabs a.on{background:var(--ink);color:#fff;border-color:var(--ink)}
+.tabs .tabs-help{align-self:center}
 .pager{display:flex;gap:5px;margin:18px 0;flex-wrap:wrap;align-items:center}
 .pager a,.pager span{padding:4px 10px;border:1px solid var(--rule);border-radius:var(--r);background:#fff;font-size:13px}
 .pager span.gap{border:none;background:none}
