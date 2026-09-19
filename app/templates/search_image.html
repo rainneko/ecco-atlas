@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% from "_macros.html" import help %}
+{% block title %}Image search · {{ cfg.SITE_TITLE }}{% endblock %}
+{% block body %}
+<h1>Image search</h1>
+<p class="lead">Upload a picture of an ornament — a crop from a page scan, a photograph, a screenshot — and the atlas says what type it is, which classes it most resembles and which houses those classes point to. The comparison uses the project's own image model {{ help('similarity') }}.</p>
+
+{% if not status.torch and not status.model_loaded %}
+<p class="flash err">Image search is not available on this server: the image model library is not installed. {{ status.error or '' }}</p>
+{% elif status.error %}
+<p class="flash err">Image search is not ready: {{ status.error }}</p>
+{% endif %}
+
+<div class="upload" id="upload" data-token="{{ request.query_params.get('token', '') }}"
+     data-model-loaded="{{ 'yes' if status.model_loaded else 'no' }}"
+     data-expected-embed="{{ status.expected_ms.embed }}" data-expected-match="{{ status.expected_ms.match }}">
+  <div class="drop" id="drop" tabindex="0">
+    <input type="file" id="file" accept="image/jpeg,image/png,image/tiff,image/webp" hidden>
+    <p><b>Drop an image here</b> or <button type="button" class="ghost" id="pick">choose a file</button></p>
+    <p class="note">JPEG, PNG, TIFF or WebP, up to 8 MB. Crop to the ornament if you can; a bit of margin does not matter.</p>
+  </div>
+
+  <div class="progress" id="progress" hidden>
+    <div class="bar"><i id="bar"></i></div>
+    <ol class="steps" id="steps">
+      <li data-step="upload">Upload</li>
+      <li data-step="model">Loading the model</li>
+      <li data-step="embed">Computing the embedding</li>
+      <li data-step="kind">Confirm the type</li>
+      <li data-step="match">Matching against the atlas</li>
+      <li data-step="done">Results</li>
+    </ol>
+    <p class="note" id="progress-msg"></p>
+  </div>
+
+  <div class="kindbox" id="kindbox" hidden>
+    <div class="qthumb"><img id="qimg" alt="your image"></div>
+    <div>
+      <h3>Step 2 of 4 — what type of ornament is this?</h3>
+      <p class="note">Each score is the mean similarity to the ten most similar of 300 sample ornaments of that type. Pick another type if the guess looks wrong, then continue.</p>
+      <div id="kinds"></div>
+      <div class="inline" style="margin-top:10px"><button type="button" id="continue">Continue</button>
+        <span class="muted small">Matching usually takes about <span id="match-eta">1</span> s.</span></div>
+    </div>
+  </div>
+</div>
+
+<p class="note" style="margin-top:28px">Your image is kept on the server for 24 hours so that the result page can be revisited or shared; it is not added to the atlas. Nothing is sent anywhere else.</p>
+{% endblock %}
+{% block scripts %}<script src="/static/search.js?v=1"></script>{% endblock %}

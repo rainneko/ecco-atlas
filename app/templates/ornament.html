@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import kdot %}
+{% from "_macros.html" import kdot, help %}
 {% block title %}{{ o.label or o.oid }} · {{ cfg.SITE_TITLE }}{% endblock %}
 {% set sup_name = names.get(('superclass', o.superclass)) %}
 {% set sub_name = names.get(('subclass', o.subclass)) %}
@@ -17,6 +17,7 @@
   <div class="orn-image">
     <img src="{{ crop_url(o.oid, 900) }}" alt="Ornament {{ o.label or '' }} on page {{ o.page }}">
     <div class="orn-actions">
+      <form method="post" action="/search/image/from/{{ o.oid }}"><button class="quiet" title="Search the atlas with this ornament's own image">Find similar</button></form>
       <a class="btn quiet" href="/img/page/{{ o.oid }}" target="_blank" rel="noopener">Full page image</a>
       {% if o.book_id and o.page %}<a class="btn quiet" href="{{ viewer_url(o.book_id, o.page) }}" target="_blank" rel="noopener">Open in the ECCO viewer</a>{% endif %}
     </div>
@@ -41,7 +42,7 @@
       {% else %}
       <tr><th></th><td class="muted">None yet. {% if tsrc %}Suggest one below.{% endif %}</td></tr>
       {% endif %}
-      <tr class="sect"><th colspan="2">Machine cluster</th></tr>
+      <tr class="sect"><th colspan="2">Machine cluster {{ help('cluster') }}</th></tr>
       {% if o.hc_cluster %}
       <tr><th>Cluster</th><td>{% if has_cl %}<a href="{{ class_url(o.pred_src, 'cluster', o.hc_cluster) }}">{{ o.kind }}-{{ o.hc_cluster }}</a>{% else %}{{ o.kind }}-{{ o.hc_cluster }} <span class="role borrower">rejected by a reviewer</span>{% endif %}
         <span class="muted small">{{ o.hc_column }}, {{ SOURCES[o.pred_src].status.split(';')[0] if o.pred_src in SOURCES else '' }}</span></td></tr>
@@ -49,6 +50,7 @@
       <tr class="sect"><th colspan="2">Book</th></tr>
       <tr><th>Title</th><td><a href="/book/{{ o.book_id }}">{{ (o.full_title or o.book_id)[:110] }}</a></td></tr>
       <tr><th>Year</th><td>{{ o.year or 'n.d.' }}</td></tr>
+      {% if o.place %}<tr><th>Place</th><td>{{ o.place }}{% if o.false_imprint %} <span class="tag" title="ESTC marks the imprint as false">false imprint</span>{% endif %}</td></tr>{% endif %}
       <tr><th>Page</th><td>{{ o.page }} of {{ o.total_pages or '?' }}</td></tr>
       <tr><th>ESTC</th><td>{{ o.estc_id or '–' }}</td></tr>
       <tr><th>Publishers</th><td>{{ o.publishers_raw or '–' }}</td></tr>

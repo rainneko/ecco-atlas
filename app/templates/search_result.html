@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% from "_macros.html" import kdot, help %}
+{% block title %}Image search result · {{ cfg.SITE_TITLE }}{% endblock %}
+{% block body %}
+<nav class="crumbs"><a href="/search/image">Image search</a> / result</nav>
+<h1>Image search</h1>
+{% if not res %}
+<p class="flash err">This query has not been matched yet. <a href="/search/image?token={{ token }}">Continue it</a>.</p>
+{% else %}
+<div class="result">
+  <aside class="qside">
+    <div class="qimage"><img src="/img/query/{{ token }}.jpg" alt="query image"></div>
+    <section class="panel">
+      <h3>Type</h3>
+      <form method="get" action="/search/image" class="kinds">
+        <input type="hidden" name="token" value="{{ token }}">
+        {% for k in cfg.KINDS %}{% set s = scores.get(k) %}
+        <label class="kindrow"><input type="radio" name="kind" value="{{ k }}" {{ 'checked' if k == kind }}>
+          <span class="kl">{{ kdot(k) }}{{ k }}</span>
+          <span class="kbar"><i style="width:{{ ((s or 0) * 100)|round(1) }}%"></i></span>
+          <span class="kv">{{ '%.2f'|format(s) if s is not none else '–' }}</span></label>
+        {% endfor %}
+        <button class="quiet" style="margin-top:8px">Match again with this type</button>
+      </form>
+      <p class="note">{{ KIND_LABEL.get(kind, kind) }} {{ help(kind) }}. Scores are mean similarity to the ten nearest of 300 sample ornaments per type.</p>
+    </section>
+    <p class="note">Model: {{ status.model or '–' }}. Results are kept for {{ ttl }} hours. <a href="/search/image">Search another image</a>.</p>
+  </aside>
+
+  <div class="rmain">
+    <h2 style="margin-top:0">Most likely classes {{ help('similarity') }}</h2>
+    {% if res.classes %}
+    <table>
+      <thead><tr><th></th><th>Class</th><th class="num">Similarity max · mean</th><th class="num">Images</th><th class="num">Books</th><th class="num">Years</th></tr></thead>
+      <tbody>{% for c in res.classes[:20] %}
+      {% set o = brief.get(c.best_oid) %}
+      <tr>
+        <td class="mini"><a href="{{ class_url(c.src, c.level, c.value) }}"><img loading="lazy" src="{{ crop_url(c.best_oid or c.exemplar) }}" alt=""></a></td>
+        <td>{{ kdot(c.kind) }}<a href="{{ class_url(c.src, c.level, c.value) }}">{{ class_label(c.src, c.level, c.value) }}</a>
+          <span class="tag fam">{{ 'human' if SOURCES[c.src].family == 'ann' else 'machine' }}</span>
+          {% if c.t_owned %}<span class="tag t-own">T</span>{% endif %}</td>
+        <td class="num"><b>{{ '%.2f'|format(c.max) }}</b> <span class="muted">· {{ '%.2f'|format(c.mean) }}</span></td>
+        <td class="num">{{ c.n }}</td><td class="num">{{ c.n_books or '–' }}</td>
+        <td class="num">{{ c.y0 or '?' }}–{{ c.y1 or '?' }}</td>
+      </tr>{% endfor %}</tbody>
+    </table>
+    {% else %}<p class="muted">No classes of this type have embeddings yet.</p>{% endif %}
+
+    <h2>Closest single images</h2>
+    <div class="gallery">
+      {% for i in res.images %}{% set o = brief.get(i.oid) %}
+      <figure class="thumb">
+        <a href="/ornament/{{ i.oid }}"><img loading="lazy" src="{{ crop_url(i.oid) }}" alt=""></a>
+        <figcaption><b>{{ '%.2f'|format(i.sim) }}</b> {% if o %}{% set cl = class_of(o) %}{% if cl %}<a href="{{ cl.url }}">{{ cl.label }}</a>{% endif %}<br>
+          <span class="muted">{{ o.year or 'n.d.' }}, <a class="muted" href="/book/{{ o.book_id }}">{{ (o.full_title or o.book_id)[:40] }}</a></span>{% endif %}</figcaption>
+      </figure>
+      {% else %}<p class="muted">Nothing to show.</p>{% endfor %}
+    </div>
+
+    <h2>Likely houses</h2>
+    <p class="note">Based on the imprints of the books that carry the {{ res.houses.n_classes }} most similar classes (similarity ≥ {{ cfg.MATCH_MIN_SIM }}), weighted by similarity. A similar design is not proof of the same block — treat this as a list of houses worth checking.</p>
+    <div class="panels">
+      {% for role in ['publisher', 'printer'] %}
+      <section class="panel"><h3>{{ role|capitalize }}s</h3>
+        {% set items = res.houses.get(role, []) %}
+        {% if items %}<ol class="mixlist">{% for h in items %}
+          <li><i class="sw" data-i="{{ loop.index0 % 8 }}"></i><a href="/agent/{{ h.name }}">{{ h.display or h.name }}</a><span class="n">{{ pct(h.p) }}</span></li>{% endfor %}</ol>
+        {% else %}<p class="muted small">No {{ role }} appears in the imprints of the matched classes.</p>{% endif %}
+      </section>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+{% endif %}
+{% endblock %}

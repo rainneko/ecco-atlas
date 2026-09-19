@@ -137,31 +137,91 @@ def open_report_count():
 
 
 # ================================================================= books
-def search_books(term, limit=30, offset=0, kind=None, tonson_only=False):
-    """Substring match first (exact-feeling), trigram similarity as fallback."""
-    t = N.norm_title(term)
-    where, params = [], {"t": t, "like": f"%{t}%", "limit": limit, "offset": offset}
-    if t:
-        where.append("(b.title_norm LIKE %(like)s OR b.title_norm %% %(t)s)")
+BOOK_SORTS = {"title": "b.title_norm", "year": "b.year", "n": "n_orn"}
+
+
+def _words(term):
+    return [w for w in N.norm_title(term).split() if w]
+
+
+def suggest_words(words):
+    """Closest vocabulary word for each query word that no title contains
+    (trigram similarity on ~50k short words; DESIGN §4.7)."""
+    out = {}
+    for w in words:
+        r = q("""SELECT word FROM book_word WHERE word %% %(w)s
+                 ORDER BY similarity(word, %(w)s) DESC, n DESC LIMIT 1""", {"w": w}, one=True)
+        if r and r["word"] != w:
+            out[w] = r["word"]
+    return out
+
+
+def search_books(term, limit=30, offset=0, kind=None, tonson_only=False, sort="",
+                 desc=True, place=None, _retry=True):
+    """Every query word must occur in the title (indexed LIKE); titles that
+    contain the words as one phrase rank first. Count comes from the same
+    query. Returns (rows, total, corrected_term_or_None)."""
+    words = _words(term)
+    phrase = " ".join(words)
+    where, params = [], {"phrase": f"%{phrase}%", "limit": limit, "offset": offset}
+    for i, w in enumerate(words):
+        where.append(f"b.title_norm LIKE %(w{i})s")
+        params[f"w{i}"] = f"%{w}%"
     if tonson_only:
         where.append("b.is_tonson")
     if kind:
         where.append("EXISTS (SELECT 1 FROM ornament o2 "
                      "WHERE o2.book_id = b.book_id AND o2.kind = %(kind)s)")
         params["kind"] = kind
-    w = ("WHERE " + " AND ".join(where)) if where else ""
+    if place:
+        where.append("b.place_key = %(place)s")
+        params["place"] = place
+    w_sql = ("WHERE " + " AND ".join(where)) if where else ""
+    d = "DESC" if desc else "ASC"
+    if sort in BOOK_SORTS:
+        order = f"{BOOK_SORTS[sort]} {d} NULLS LAST, b.year NULLS LAST, b.book_id"
+    elif words:
+        order = "exact DESC, n_orn DESC, b.year NULLS LAST, b.book_id"
+    else:
+        order = "b.year NULLS LAST, n_orn DESC, b.book_id"
     rows = q(f"""
         SELECT b.book_id, b.full_title, b.year, b.estc_id, b.is_tonson, b.total_pages,
-               b.publishers_raw, b.printers_raw, coalesce(m.n_orn, 0) AS n_orn,
-               CASE WHEN %(t)s = '' THEN 0 ELSE similarity(b.title_norm, %(t)s) END AS sim,
-               CASE WHEN %(t)s <> '' AND b.title_norm LIKE %(like)s THEN 1 ELSE 0 END AS exact
+               b.publishers_raw, b.printers_raw, b.place, coalesce(m.n_orn, 0) AS n_orn,
+               (b.title_norm LIKE %(phrase)s)::int AS exact,
+               count(*) OVER () AS total
         FROM book b LEFT JOIN mv_book m USING (book_id)
-        {w}
-        ORDER BY exact DESC, sim DESC, n_orn DESC, b.year NULLS LAST
+        {w_sql}
+        ORDER BY {order}
         LIMIT %(limit)s OFFSET %(offset)s
     """, params)
-    total = q(f"SELECT count(*) AS n FROM book b {w}", params, one=True)["n"]
-    return rows, total
+    if rows:
+        return rows, rows[0]["total"], None
+    if words and _retry and offset == 0:
+        fixes = suggest_words(words)
+        if fixes:
+            fixed = " ".join(fixes.get(w, w) for w in words)
+            rows, total, _ = search_books(fixed, limit, 0, kind, tonson_only, sort, desc,
+                                          place, _retry=False)
+            if rows:
+                return rows, total, fixed
+    return [], 0, None
+
+
+def book_agents_many(book_ids):
+    """{book_id: [{name, display_name, role}, ...]} for a list page."""
+    out = {b: [] for b in book_ids}
+    if book_ids:
+        for r in q("""SELECT ba.book_id, a.name, a.display_name, ba.role FROM book_agent ba
+                      JOIN agent a USING (agent_id) WHERE ba.book_id = ANY(%s)
+                      ORDER BY ba.role, a.name""", (list(book_ids),)):
+            out[r["book_id"]].append(r)
+    return out
+
+
+def places():
+    """Most frequent places with counts; empty when no place data is loaded."""
+    return q("""SELECT place_key, min(place) AS place, count(*) AS n FROM book
+                WHERE place_key IS NOT NULL GROUP BY place_key ORDER BY n DESC LIMIT 12""")
 
 
 def get_book(book_id):
@@ -213,11 +273,14 @@ def similar_books(book_id, srcs, limit=10):
                FROM mv_book_plate bp JOIN mv_plate p USING (plate)
                WHERE bp.book_id IN (SELECT book_id FROM cand) AND bp.src = ANY(%(s)s)
                GROUP BY bp.book_id)
-        SELECT b.book_id, b.full_title, b.year, b.is_tonson, c.shared,
+        SELECT b.book_id, b.full_title, b.year, b.is_tonson, b.place, c.shared,
                c.dot / NULLIF(cn.n * (SELECT n FROM tn), 0) AS score,
-               coalesce(m.n_orn, 0) AS n_orn
+               coalesce(m.n_orn, 0) AS n_orn,
+               (b.place_key IS NOT NULL AND t.place_key IS NOT NULL
+                AND b.place_key <> t.place_key) AS diff_place
         FROM cand c JOIN cn USING (book_id) JOIN book b USING (book_id)
         LEFT JOIN mv_book m USING (book_id)
+        CROSS JOIN (SELECT place_key FROM book WHERE book_id = %(b)s) t
         ORDER BY score DESC NULLS LAST, c.shared DESC, n_orn DESC
         LIMIT %(lim)s
     """, {"b": book_id, "s": list(srcs), "lim": limit})
@@ -341,8 +404,8 @@ def class_book_agents(src, level, value):
     composition, ownership and lending in Python."""
     return q(f"""
         WITH bks AS (SELECT DISTINCT o.book_id FROM ornament o WHERE {class_cond(src, level)})
-        SELECT bks.book_id, b.year, b.full_title, b.has_imprint,
-               ba.agent_id, ba.role, a.name, a.display_name
+        SELECT bks.book_id, b.year, b.full_title, b.has_imprint, b.place, b.place_key,
+               b.false_imprint, ba.agent_id, ba.role, a.name, a.display_name
         FROM bks JOIN book b USING (book_id)
         LEFT JOIN book_agent ba USING (book_id) LEFT JOIN agent a USING (agent_id)
     """, {"src": src, "v": value})
@@ -759,3 +822,206 @@ def existing_subclasses(src, sup):
     return [r["subclass"] for r in q(
         "SELECT DISTINCT subclass FROM ornament WHERE ann_src = %s AND superclass = %s "
         "AND subclass IS NOT NULL", (src, sup))]
+
+
+# ================================================================= image search (§9)
+def embedding_model():
+    return q("SELECT name, dim, input_sizes, n, loaded_at FROM embedding_model "
+             "ORDER BY loaded_at DESC LIMIT 1", one=True)
+
+
+def model_row(name=None):
+    if name:
+        return q("SELECT * FROM model_store WHERE name = %s", (name,), one=True)
+    return q("SELECT * FROM model_store ORDER BY loaded_at DESC LIMIT 1", one=True)
+
+
+def model_rows():
+    return q("SELECT name, arch, dim, n_bytes, source_file, loaded_at FROM model_store "
+             "ORDER BY loaded_at DESC")
+
+
+def kind_samples():
+    """{kind: ([vec bytes], [oid])}"""
+    out = {}
+    for r in q("""SELECT s.kind, s.oid, e.vec FROM kind_sample s JOIN ornament_embedding e
+                  USING (oid) ORDER BY s.kind, s.oid"""):
+        vecs, oids = out.setdefault(r["kind"], ([], []))
+        vecs.append(r["vec"]); oids.append(r["oid"])
+    return out
+
+
+def centroids_by_kind():
+    """{kind: [row(src, value, level, n, vec, plate, n_books, y0, y1, exemplar,
+                 t_owned)]} — one row per centroid, joined to its own class row."""
+    out = {}
+    fam = ",".join(f"('{s}','{v['family']}')" for s, v in config.SOURCES.items())
+    for r in q(f"""
+        WITH c AS (
+          SELECT c.*, s.family,
+                 CASE WHEN s.family = 'pred' THEN 'cluster'
+                      WHEN array_length(string_to_array(c.value, '/'), 1) >= 3 THEN 'variant'
+                      WHEN array_length(string_to_array(c.value, '/'), 1) = 2 THEN 'subclass'
+                      ELSE 'superclass' END AS level
+          FROM cluster_centroid c JOIN (VALUES {fam}) s(src, family) ON s.src = c.src)
+        SELECT c.src, c.value, c.kind, c.n, c.vec, c.level, c.src || ':' || c.value AS plate,
+               m.n_books, m.y0, m.y1, m.exemplar, p.t_owned
+        FROM c
+        LEFT JOIN mv_class m ON m.src = c.src AND m.level = c.level
+             AND m.value = CASE c.level WHEN 'variant' THEN c.value
+                                        WHEN 'subclass' THEN split_part(c.value, '/', 2)
+                                        WHEN 'superclass' THEN split_part(c.value, '/', 1)
+                                        ELSE c.value END
+        LEFT JOIN mv_plate p ON p.plate = c.src || ':' || c.value
+    """):
+        out.setdefault(r["kind"], []).append(r)
+    return out
+
+
+def all_embeddings(kind):
+    rows = q("""SELECT e.oid, e.vec FROM ornament_embedding e JOIN ornament o USING (oid)
+                WHERE o.kind = %s""", (kind,))
+    return [r["oid"] for r in rows], [r["vec"] for r in rows]
+
+
+def members_with_vectors(keys):
+    """{(src, value): [{oid, vec}]} for machine clusters and human plates."""
+    out = {k: [] for k in keys}
+    if not keys:
+        return out
+    for src, value in keys:
+        if config.SOURCES[src]["family"] == "pred":
+            rows = q("""SELECT o.oid, e.vec FROM ornament o JOIN ornament_embedding e USING (oid)
+                        WHERE o.pred_src = %s AND o.hc_cluster = %s AND NOT o.cluster_rejected
+                        ORDER BY o.oid LIMIT 400""", (src, value))
+        else:
+            rows = q("""SELECT o.oid, e.vec FROM ornament o JOIN ornament_embedding e USING (oid)
+                        WHERE o.ann_src = %s AND o.class_path = %s ORDER BY o.oid LIMIT 400""",
+                     (src, value))
+        out[(src, value)] = rows
+    return out
+
+
+def plate_agent_shares(plates):
+    """{plate: [{agent_id, name, display_name, role, coverage}]}"""
+    out = {p: [] for p in plates}
+    if not plates:
+        return out
+    for r in q("""SELECT pa.plate, a.agent_id, a.name, a.display_name, ba.role,
+                         pa.share AS coverage
+                  FROM mv_plate_agent pa JOIN agent a USING (agent_id)
+                  JOIN LATERAL (SELECT role FROM book_agent x JOIN mv_book_plate bp USING (book_id)
+                                WHERE x.agent_id = pa.agent_id AND bp.plate = pa.plate
+                                GROUP BY role ORDER BY count(*) DESC LIMIT 1) ba ON TRUE
+                  WHERE pa.plate = ANY(%s)""", (list(plates),)):
+        out[r["plate"]].append(r)
+    return out
+
+
+def ornaments_brief(oids):
+    """{oid: {label, kind, book_id, year, full_title, page}} for result lists."""
+    if not oids:
+        return {}
+    return {r["oid"]: r for r in q(
+        """SELECT o.oid, o.label, o.kind, o.book_id, o.page, o.ann_src, o.pred_src, o.hc_cluster,
+                  o.class_path, o.superclass, o.subclass, o.variant, o.cluster_rejected,
+                  b.year, b.full_title, b.is_tonson
+           FROM ornament o LEFT JOIN book b USING (book_id) WHERE o.oid = ANY(%s)""",
+        (list(oids),))}
+
+
+# ================================================================= places, pairs, links (§12)
+def design_place_rows(src, level, value):
+    """(design, book_id, place_key, place) for the designs one level below
+    (src, level, value): subclasses of a superclass, variants of a subclass."""
+    if level == "superclass":
+        grp, cond = "o.subclass", "o.ann_src = %(src)s AND o.superclass = %(v)s AND o.subclass IS NOT NULL"
+    elif level == "subclass":
+        grp, cond = "o.class_path", ("o.ann_src = %(src)s AND o.subclass = %(v)s AND o.variant <> ''"
+                                     " AND o.class_path IS NOT NULL")
+    else:
+        return []
+    return q(f"""SELECT DISTINCT {grp} AS design, o.book_id, b.place_key, b.place
+                 FROM ornament o JOIN book b USING (book_id) WHERE {cond}""",
+             {"src": src, "v": value})
+
+
+def cluster_group_place_rows(src, values):
+    if not values:
+        return []
+    return q("""SELECT DISTINCT o.hc_cluster AS design, o.book_id, b.place_key, b.place
+                FROM ornament o JOIN book b USING (book_id)
+                WHERE o.pred_src = %s AND o.hc_cluster = ANY(%s) AND NOT o.cluster_rejected""",
+             (src, list(values)))
+
+
+def cluster_links(src, value, limit=12):
+    """Related clusters of (src, value) by stored centroid similarity."""
+    return q("""
+        SELECT l.sim, l.rejected, CASE WHEN l.a = %(v)s THEN l.b ELSE l.a END AS other,
+               m.n, m.n_books, m.y0, m.y1, m.exemplar, m.kind
+        FROM cluster_link l
+        LEFT JOIN mv_class m ON m.src = l.src AND m.level = 'cluster'
+             AND m.value = CASE WHEN l.a = %(v)s THEN l.b ELSE l.a END
+        WHERE l.src = %(src)s AND (l.a = %(v)s OR l.b = %(v)s)
+        ORDER BY l.rejected, l.sim DESC LIMIT %(lim)s""", {"src": src, "v": value, "lim": limit})
+
+
+def cluster_group(src, value, cap=None):
+    """Connected component of accepted links around (src, value), capped."""
+    cap = cap or config.LINK_MAX_GROUP
+    seen, frontier = {value}, [value]
+    while frontier and len(seen) < cap:
+        rows = q("""SELECT CASE WHEN a = ANY(%(f)s) THEN b ELSE a END AS other
+                    FROM cluster_link WHERE src = %(src)s AND NOT rejected
+                      AND (a = ANY(%(f)s) OR b = ANY(%(f)s))""", {"src": src, "f": frontier})
+        frontier = [r["other"] for r in rows if r["other"] not in seen]
+        seen.update(frontier)
+    return sorted(seen, key=N.natural_key)
+
+
+def set_link_rejected(src, a, b, rejected):
+    return x("UPDATE cluster_link SET rejected = %s WHERE src = %s AND ((a = %s AND b = %s) "
+             "OR (a = %s AND b = %s))", (rejected, src, a, b, b, a))
+
+
+def link_stats():
+    return q("SELECT src, count(*) AS n, count(*) FILTER (WHERE rejected) AS n_rej, "
+             "max(computed_at) AS at FROM cluster_link GROUP BY src ORDER BY src")
+
+
+def book_pairs(diff_only=True, limit=100, offset=0):
+    where = "WHERE p.diff_place" if diff_only else ""
+    rows = q(f"""
+        SELECT p.*, ba.full_title AS title_a, bb.full_title AS title_b, ba.place AS pl_a,
+               bb.place AS pl_b, ba.false_imprint AS fi_a, bb.false_imprint AS fi_b,
+               count(*) OVER () AS total
+        FROM mv_book_pair p JOIN book ba ON ba.book_id = p.a JOIN book bb ON bb.book_id = p.b
+        {where} ORDER BY p.diff_place DESC, p.shared DESC, p.jaccard DESC, p.a, p.b
+        LIMIT %s OFFSET %s""", (limit, offset))
+    return rows, (rows[0]["total"] if rows else 0)
+
+
+def pair_stats():
+    return q("""SELECT count(*) AS n, count(*) FILTER (WHERE diff_place) AS n_diff,
+                       count(*) FILTER (WHERE place_a IS NOT NULL AND place_b IS NOT NULL) AS n_placed
+                FROM mv_book_pair""", one=True)
+
+
+def shared_plates(pairs, per_pair=6):
+    """{(a, b): [plate rows]} for the pairs on one page."""
+    out = {}
+    for p in pairs:
+        out[(p["a"], p["b"])] = q("""
+            SELECT x.plate, m.exemplar, m.kind FROM mv_book_plate x JOIN mv_book_plate y USING (plate)
+            JOIN mv_plate m USING (plate)
+            WHERE x.book_id = %s AND y.book_id = %s ORDER BY m.n_books, x.plate LIMIT %s""",
+            (p["a"], p["b"], per_pair))
+    return out
+
+
+def book_pairs_for(book_id, limit=10):
+    return q("""SELECT p.*, CASE WHEN p.a = %(b)s THEN p.b ELSE p.a END AS other
+                FROM mv_book_pair p WHERE p.a = %(b)s OR p.b = %(b)s
+                ORDER BY p.diff_place DESC, p.shared DESC LIMIT %(lim)s""",
+             {"b": book_id, "lim": limit})

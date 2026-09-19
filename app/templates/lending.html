@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import srcboxes, pagerbar, kdot %}
+{% from "_macros.html" import srcboxes, pagerbar, kdot, help %}
 {% block title %}Lending · {{ cfg.SITE_TITLE }}{% endblock %}
 {% block body %}
 <h1>Suspected lending</h1>
@@ -25,7 +25,7 @@
   <a class="small" href="/lending.csv?{{ qs }}">Download as CSV</a></p>
 
 <table class="lend-events">
-  <thead><tr><th></th><th>Plate</th><th>Owner</th><th>Borrower</th><th>Book</th><th class="num">Year</th><th>Owner's years</th><th>Timing</th>{% if admin %}<th>Review</th>{% endif %}</tr></thead>
+  <thead><tr><th></th><th>Plate</th><th>Owner {{ help('owner') }}</th><th>Borrower {{ help('borrower') }}</th><th>Book</th><th class="num">Year</th><th>Owner's years</th><th>Timing</th>{% if admin %}<th>Review</th>{% endif %}</tr></thead>
   <tbody>
   {% for e in events %}
   {% set rv = reviews.get((e.plate, e.owner_ids, e.borrower, e.book_id)) %}

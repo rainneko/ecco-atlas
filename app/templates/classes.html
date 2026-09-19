@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import pagerbar, sorth, kdot %}
+{% from "_macros.html" import pagerbar, sorth, kdot, help %}
 {% block title %}Ornament classes · {{ cfg.SITE_TITLE }}{% endblock %}
 {% block body %}
 <h1>Ornament classes</h1>
@@ -15,7 +15,7 @@
   <button>Show</button>
 </form>
 {% if tax %}
-<p class="note">{{ "{:,}".format(total) }} {{ level }}{{ 'es' if level in ('superclass','subclass') else 's' }}{% if level == 'cluster' and hc %} (column {{ hc }}){% endif %}. Click a column heading to sort. <span class="tag t-own">T</span> marks plates whose largest holder is Tonson or Watts.</p>
+<p class="note">{{ "{:,}".format(total) }} {{ level }}{{ 'es' if level in ('superclass','subclass') else 's' }}{% if level == 'cluster' and hc %} (column {{ hc }}){% endif %}. Click a column heading to sort. <span class="tag t-own">T</span> marks plates whose largest holder is Tonson or Watts{{ help('T') }}.</p>
 <table>
   <thead><tr><th></th>
     {{ sorth(level|capitalize, 'name', sort, desc, sort_base) }}

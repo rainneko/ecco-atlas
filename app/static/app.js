@@ -44,6 +44,17 @@
     document.addEventListener('focusout', e => { if (e.target.closest('.pt')) card.hidden = true; });
   }
 
+  // "Cite" buttons copy the BibTeX of a publication (front page, /about)
+  document.addEventListener('click', e => {
+    const b = e.target.closest('button[data-cite]');
+    if (!b) return;
+    const ta = document.getElementById('bib-' + b.dataset.cite);
+    const msg = document.querySelector('[data-cite-msg="' + b.dataset.cite + '"]');
+    const done = ok => { if (msg) { msg.textContent = ok ? 'BibTeX copied' : 'Select and copy:'; if (!ok) { ta.hidden = false; ta.select(); } setTimeout(() => { msg.textContent = ''; }, 2500); } };
+    if (navigator.clipboard && ta) navigator.clipboard.writeText(ta.value).then(() => done(true), () => done(false));
+    else done(false);
+  });
+
   // live read-outs next to range sliders
   document.querySelectorAll('.range input[type=range]').forEach(inp => {
     const out = inp.parentElement.querySelector('output');

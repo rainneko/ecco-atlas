@@ -7,7 +7,7 @@ import math
 from contextlib import asynccontextmanager
 from urllib.parse import quote, urlencode
 
-from fastapi import FastAPI, Form, HTTPException, Query, Request
+from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import (HTMLResponse, JSONResponse, PlainTextResponse,
                                RedirectResponse, Response)
 from fastapi.staticfiles import StaticFiles
@@ -15,7 +15,7 @@ from fastapi.templating import Jinja2Templates
 from itsdangerous import BadSignature, URLSafeTimedSerializer
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from . import config, db, derived, imaging, lending, workbench
+from . import config, db, derived, embedding, imaging, lending, places, workbench
 from . import normalize as N
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
@@ -32,6 +32,7 @@ async def lifespan(app: FastAPI):
         log.warning("cache dir %s not writable; crops will be refetched", config.CACHE_DIR)
     log.info("started; image_base=%s cache=%s (%d items)", config.IMAGE_BASE,
              config.CACHE_DIR, config.CACHE_MAX_ITEMS)
+    embedding.engine.warmup()          # loads the model in the background (§9.1)
     yield
     db.close_pool()
 
@@ -183,20 +184,32 @@ def home(request: Request):
                 kinds=db.kind_counts(), hero=(STATIC / config.HERO_IMAGE).exists())
 
 
+@app.get("/about", response_class=HTMLResponse)
+def about(request: Request):
+    return page(request, "about.html", summary=db.site_summary())
+
+
 # ================================================================= books
 @app.get("/books", response_class=HTMLResponse)
-def books(request: Request, q: str = "", kind: str = "", tonson: int = 0,
-          page_no: int = Query(1, alias="p", ge=1)):
+def books(request: Request, q: str = "", kind: str = "", tonson: int = 0, place: str = "",
+          sort: str = "", dir: str = "", page_no: int = Query(1, alias="p", ge=1)):
     limit = 30
-    rows, total = db.search_books(q, limit, (page_no - 1) * limit,
-                                  kind if kind in config.KINDS else None, bool(tonson))
-    st = db.strips([r["book_id"] for r in rows])
+    sort = sort if sort in db.BOOK_SORTS else ""
+    desc = (dir == "desc") if dir else sort == "n"
+    rows, total, fixed = db.search_books(q, limit, (page_no - 1) * limit,
+                                         kind if kind in config.KINDS else None, bool(tonson),
+                                         sort, desc, place or None)
+    ids = [r["book_id"] for r in rows]
+    st = db.strips(ids)
     strips = {r["book_id"]: strip_points(st[r["book_id"]], r["total_pages"]) for r in rows}
     pages = math.ceil(total / limit)
-    base = "/books?" + urlencode({"q": q, "kind": kind, "tonson": tonson})
+    filt = {"q": q, "kind": kind, "tonson": tonson, "place": place}
+    sort_base = "/books?" + urlencode(filt)
+    base = sort_base + f"&sort={sort}&dir={'desc' if desc else 'asc'}"
     return page(request, "books.html", rows=rows, total=total, q=q, kind=kind, tonson=tonson,
-                page_no=page_no, pager=pager(page_no, pages), pages=pages, base=base,
-                strips=strips)
+                place=place, places=db.places(), fixed=fixed, sort=sort, desc=desc,
+                sort_base=sort_base, page_no=page_no, pager=pager(page_no, pages), pages=pages,
+                base=base, strips=strips, agents=db.book_agents_many(ids))
 
 
 @app.get("/book/{book_id}", response_class=HTMLResponse)
@@ -209,7 +222,7 @@ def book_detail(request: Request, book_id: str):
     return page(request, "book.html", b=b, agents=db.book_agents(book_id), points=pts, tp=tp,
                 orns=db.book_ornaments(book_id),
                 similar=db.similar_books(book_id, sel, 10) if sel else [],
-                sel=sel, avail=avail, sq=sq)
+                pairs=db.book_pairs_for(book_id), sel=sel, avail=avail, sq=sq)
 
 
 # ================================================================= ornaments
@@ -315,6 +328,25 @@ def composition(rows):
     return out, len(known)
 
 
+def place_composition(rows):
+    """Coverage by place over the class's books with a known place (§12.2)."""
+    seen, per = {}, {}
+    for r in rows:
+        if r["book_id"] in seen:
+            continue
+        seen[r["book_id"]] = r.get("place_key")
+    known = {b: k for b, k in seen.items() if k}
+    for b, k in known.items():
+        per.setdefault(k, dict(key=k, place=None, n=0))["n"] += 1
+    for r in rows:
+        if r.get("place_key") in per and not per[r["place_key"]]["place"]:
+            per[r["place_key"]]["place"] = r["place"]
+    items = sorted(per.values(), key=lambda v: (-v["n"], v["key"]))
+    for v in items:
+        v["coverage"] = v["n"] / max(1, len(known))
+    return dict(items=items, n_known=len(known), n_books=len(seen))
+
+
 @app.get("/class/{a}/{b}", response_class=HTMLResponse)
 def legacy_class(a: str, b: str):
     if a in ("superclass", "subclass"):
@@ -349,13 +381,31 @@ def class_detail(request: Request, src: str, level: str, value: str, order: str 
     names = db.names_for(src, [p for p in (("superclass", sup), ("subclass", sub)) if p[1]])
     rows = db.class_book_agents(src, level, value)
     comp, n_known = composition(rows)
+    place_mix = place_composition(rows)
+    pparams = places.Params.from_query(request.query_params)
+    contrast, group, links = None, None, []
+    if level in ("superclass", "subclass"):
+        contrast = places.analyse(db.design_place_rows(src, level, value), pparams)
+    elif level == "cluster":
+        links = db.cluster_links(src, value)
+        group = db.cluster_group(src, value)
+        if len(group) > 1:
+            contrast = places.analyse(db.cluster_group_place_rows(src, group), pparams)
+    contrast_ex = {}
+    if contrast:
+        lv = {"superclass": "subclass", "subclass": "variant", "cluster": "cluster"}[level]
+        for d in contrast["designs"]:
+            d["level"], d["url_value"] = lv, d["design"]
+            d["exemplar"] = db.class_exemplar(src, lv, d["design"])
+        contrast_ex = {d["design"]: d for d in contrast["designs"]}
     params = lending.Params.from_query(request.query_params)
     lend = lending.analyse_rows(rows, params) if row["plate_key"] else None
     ag = db.agents_by_id({e["borrower"] for e in lend.events} | set(lend.owners)) if lend else {}
     pages = math.ceil(row["n"] / limit)
     return page(request, "class.html", src=src, level=level, value=value, spec=spec, row=row,
                 members=members, order=order, sup=sup, sub=sub, names=names,
-                comp=comp, n_known=n_known, lend=lend, lend_agents=ag, params=params,
+                comp=comp, n_known=n_known, places=place_mix, lend=lend, lend_agents=ag, params=params,
+                contrast=contrast, contrast_ex=contrast_ex, pparams=pparams, group=group, links=links,
                 owners=set(lend.owners) if lend and lend.eligible else set(),
                 borrowers=set(lend.borrowers) if lend else set(),
                 struct=db.class_structure(src, level, value, sup, sub),
@@ -543,8 +593,8 @@ def api_ornament(oid: str):
 
 @app.get("/api/search/books")
 def api_search_books(q: str = "", limit: int = 20):
-    rows, total = db.search_books(q, min(max(limit, 1), 100))
-    return {"total": total, "results": rows}
+    rows, total, fixed = db.search_books(q, min(max(limit, 1), 100))
+    return {"total": total, "results": rows, "corrected_query": fixed}
 
 
 # ================================================================= admin
@@ -590,7 +640,8 @@ def admin_home(request: Request):
         return RedirectResponse("/admin/login", status_code=303)
     return page(request, "admin.html", changes=db.recent_changes(30), meta=db.meta(),
                 crops=db.crop_store_stats(), lru=imaging.lru_count(), wb=wb_options(),
-                wb_err=request.query_params.get("wb_err"))
+                wb_err=request.query_params.get("wb_err"), emb=embedding.engine.status(),
+                models=db.model_rows(), links=db.link_stats(), pairs=db.pair_stats())
 
 
 @app.get("/admin/workbench")
@@ -697,6 +748,136 @@ async def admin_workbench_save(request: Request):
         db.clear_cache()
     return {"ok": True, "saved": n}
 
+
+
+
+# ================================================================= reprints (§12.4)
+@app.get("/reprints", response_class=HTMLResponse)
+def reprints(request: Request, all: int = 0, page_no: int = Query(1, alias="p", ge=1)):
+    limit = 50
+    rows, total = db.book_pairs(not all, limit, (page_no - 1) * limit)
+    return page(request, "reprints.html", rows=rows, total=total, stats=db.pair_stats(),
+                all=all, shared=db.shared_plates(rows), page_no=page_no,
+                pager=pager(page_no, math.ceil(total / limit)), base=f"/reprints?all={all}")
+
+
+@app.get("/reprints.csv")
+def reprints_csv(all: int = 0):
+    rows, _ = db.book_pairs(not all, 100000, 0)
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["book_a", "title_a", "year_a", "place_a", "book_b", "title_b", "year_b", "place_b",
+                "shared_plates", "jaccard", "different_place"])
+    for r in rows:
+        w.writerow([r["a"], r["title_a"], r["year_a"], r["pl_a"], r["b"], r["title_b"], r["year_b"],
+                    r["pl_b"], r["shared"], r["jaccard"], r["diff_place"]])
+    return PlainTextResponse(buf.getvalue(), media_type="text/csv",
+                             headers={"Content-Disposition": "attachment; filename=book_pairs.csv"})
+
+
+@app.post("/admin/link")
+def admin_link(request: Request, src: str = Form(...), a: str = Form(...), b: str = Form(...),
+               action: str = Form(...), back: str = Form("/")):
+    need_admin(request)
+    db.set_link_rejected(src, a, b, action == "reject")
+    return RedirectResponse(back if back.startswith("/") else "/", status_code=303)
+
+
+# ================================================================= image search (§9)
+def _class_of(o):
+    t = most_specific(o) or cluster_of(o)
+    return dict(url=class_url(*t), label=o["label"]) if t else None
+
+
+@app.get("/search/image", response_class=HTMLResponse)
+def search_image(request: Request):
+    return page(request, "search_image.html", status=embedding.engine.status())
+
+
+@app.get("/api/image-search/status")
+def image_search_status():
+    return embedding.engine.status()
+
+
+@app.post("/api/image-search")
+async def image_search_upload(file: UploadFile = File(...)):
+    data = await file.read()
+    if len(data) > config.QUERY_MAX_BYTES:
+        raise HTTPException(413, "image larger than 8 MB")
+    try:
+        tok, im = embedding.save_query_image(data)
+    except Exception:  # noqa: BLE001
+        raise HTTPException(400, "not an image we can read (JPEG, PNG, TIFF, WebP)")
+    return {"token": tok, "w": im.width, "h": im.height}
+
+
+@app.post("/search/image/from/{oid}")
+def image_search_from_ornament(oid: str):
+    """Start a search with an existing ornament's own crop."""
+    o = db.get_ornament_min(oid)
+    if not o:
+        raise HTTPException(404)
+    data = imaging.crop_exact(o)
+    if not data:
+        raise HTTPException(503, "the page image is not reachable at the moment")
+    tok, _ = embedding.save_query_image(data)
+    embedding.update_state(tok, source_oid=oid)
+    return RedirectResponse(f"/search/image?token={tok}", status_code=303)
+
+
+@app.post("/api/image-search/{token}/embed")
+def image_search_embed(token: str):
+    im = embedding.load_query_image(token)
+    if im is None:
+        raise HTTPException(404, "this query has expired")
+    try:
+        vecs = embedding.engine.embed_all(im)
+    except RuntimeError as e:
+        raise HTTPException(503, str(e))
+    scores = embedding.engine.kind_scores(vecs)
+    kind = max(scores, key=scores.get) if scores else None
+    st = embedding.update_state(token, step="embedded", kind_scores=scores, kind=kind,
+                                **{embedding.vec_key(k): v.tolist() for k, v in vecs.items()})
+    return {"kind": kind, "kind_scores": scores, "model": embedding.engine.model_name,
+            "expected_ms": embedding.engine.expected_ms("match")}
+
+
+@app.post("/api/image-search/{token}/match")
+async def image_search_match(token: str, request: Request):
+    body = await request.json()
+    kind = body.get("kind")
+    st = embedding.read_state(token)
+    if not st or embedding.vec_key(kind) not in st:
+        raise HTTPException(400, "embed first, or unknown type")
+    import numpy as np
+    vec = np.asarray(st[embedding.vec_key(kind)], dtype=np.float32)
+    res = embedding.engine.match(vec, kind)
+    embedding.update_state(token, step="matched", kind=kind, result=res)
+    return {"ok": True, "n_classes": len(res["classes"]), "url": f"/search/image/{token}"}
+
+
+@app.get("/search/image/{token}", response_class=HTMLResponse)
+def search_image_result(request: Request, token: str):
+    st = embedding.read_state(token)
+    if not st or not (embedding.query_dir() / f"{token}.jpg").exists():
+        raise HTTPException(404, "this query has expired (results are kept for 24 hours)")
+    res = st.get("result")
+    oids = [c["best_oid"] for c in (res or {}).get("classes", []) if c.get("best_oid")]
+    oids += [i["oid"] for i in (res or {}).get("images", [])]
+    brief = db.ornaments_brief(oids)
+    return page(request, "search_result.html", token=token, st=st, res=res, brief=brief,
+                kind=st.get("kind"), scores=st.get("kind_scores") or {},
+                status=embedding.engine.status(), class_of=_class_of,
+                created=st.get("created"), ttl=config.QUERY_TTL_HOURS)
+
+
+@app.get("/img/query/{token}.jpg")
+def img_query(token: str):
+    p = embedding.query_dir() / f"{token}.jpg"
+    if not p.exists():
+        raise HTTPException(404)
+    return Response(p.read_bytes(), media_type="image/jpeg",
+                    headers={"Cache-Control": "private, max-age=3600"})
 
 # ================================================================= health & errors
 @app.get("/healthz")

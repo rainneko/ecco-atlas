@@ -17,7 +17,7 @@ from . import config
 log = logging.getLogger("ecco.derived")
 LOCK_KEY = 7240011
 ORDER = ["mv_book", "mv_book_plate", "mv_plate_agent", "mv_plate",
-         "mv_agent_src", "mv_class", "mv_source"]
+         "mv_agent_src", "mv_class", "mv_source", "book_word", "mv_book_pair"]
 
 
 def _in(values):
@@ -142,6 +142,37 @@ UNION ALL
 SELECT pred_src, count(*), count(DISTINCT book_id)
 FROM ornament WHERE pred_src IS NOT NULL GROUP BY pred_src;
 CREATE UNIQUE INDEX mv_source_pk ON mv_source (src);
+
+-- title vocabulary: the typo fallback of book search runs on these short
+-- words instead of on 280-character titles (DESIGN §4.7)
+CREATE MATERIALIZED VIEW book_word AS
+SELECT word, count(*) AS n
+FROM book, LATERAL regexp_split_to_table(title_norm, '\\s+') AS word
+WHERE length(word) >= 3 GROUP BY word;
+CREATE UNIQUE INDEX book_word_pk ON book_word (word);
+CREATE INDEX book_word_trgm ON book_word USING gin (word gin_trgm_ops);
+
+-- book pairs sharing plates (DESIGN §12.4). Only plates in <= {int(config.PAIR_MAX_PLATE_BOOKS)}
+-- books generate pairs; a plate in a thousand books says nothing about two of them.
+CREATE MATERIALIZED VIEW mv_book_pair AS
+WITH rare AS (
+  SELECT bp.book_id, bp.plate FROM mv_book_plate bp JOIN mv_plate p USING (plate)
+  WHERE p.n_books BETWEEN 2 AND {int(config.PAIR_MAX_PLATE_BOOKS)}),
+pairs AS (
+  SELECT x.book_id AS a, y.book_id AS b, count(*) AS shared
+  FROM rare x JOIN rare y ON y.plate = x.plate AND y.book_id > x.book_id
+  GROUP BY 1, 2 HAVING count(*) >= {int(config.PAIR_MIN_SHARED)}),
+sizes AS (SELECT book_id, count(*) AS n FROM mv_book_plate GROUP BY book_id)
+SELECT p.a, p.b, p.shared,
+       round(p.shared::numeric / (sa.n + sb.n - p.shared), 3) AS jaccard,
+       ba.year AS year_a, bb.year AS year_b, ba.place_key AS place_a, bb.place_key AS place_b,
+       (ba.place_key IS NOT NULL AND bb.place_key IS NOT NULL
+        AND ba.place_key <> bb.place_key) AS diff_place
+FROM pairs p JOIN sizes sa ON sa.book_id = p.a JOIN sizes sb ON sb.book_id = p.b
+JOIN book ba ON ba.book_id = p.a JOIN book bb ON bb.book_id = p.b;
+CREATE UNIQUE INDEX mv_book_pair_pk ON mv_book_pair (a, b);
+CREATE INDEX mv_book_pair_diff ON mv_book_pair (diff_place, shared DESC);
+CREATE INDEX mv_book_pair_b ON mv_book_pair (b);
 """
 
 

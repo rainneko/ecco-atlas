@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import othumb, pagerbar, mix, kdot %}
+{% from "_macros.html" import othumb, pagerbar, mix, kdot, help %}
 {% block title %}{{ title }} · {{ cfg.SITE_TITLE }}{% endblock %}
 {% set sup_name = names.get(('superclass', sup)) %}
 {% set sub_name = names.get(('subclass', sub)) %}
@@ -22,21 +22,29 @@
       <span><b>Images</b>{{ "{:,}".format(row.n) }}</span>
       <span><b>Books</b>{{ "{:,}".format(row.n_books) }}</span>
       <span><b>Years</b>{{ row.y0 or '?' }}–{{ row.y1 or '?' }}</span>
-      {% if row.plate_key %}<span title="We treat this class as one physical block"><b>Plate</b>yes</span>{% endif %}
+      {% if row.plate_key %}<span><b>Plate</b>yes {{ help('plate') }}</span>{% endif %}
     </div>
     {% if admin and level in ('superclass', 'subclass', 'cluster') %}<a class="btn quiet" href="/admin/workbench/{{ src }}/{{ level }}/{{ value }}">Open in the workbench</a>{% endif %}
   </div>
   <img src="{{ crop_url(row.exemplar, 900) }}" alt="Typical image of {{ title }}">
 </div>
 
-<h2>Who used it</h2>
+<h2>Who used it {{ help('coverage') }}</h2>
 <p class="note">Bar: each house's share of all imprint credits in this class (adds up to 100%). Percentages: the share of this class's {{ n_known }} books with a known imprint that name the house; a book can name several houses, so these can add up to more than 100%.</p>
-<div class="panels">
+<div class="panels three">
   <section class="panel"><h3>Publishers</h3>{{ mix(comp.publisher, owners, borrowers, n_known) }}</section>
   <section class="panel"><h3>Printers</h3>{{ mix(comp.printer, owners, borrowers, n_known) }}</section>
+  <section class="panel"><h3>Where it was printed {{ help('contrast') }}</h3>
+    {% if places.n_known %}
+    <div class="mixbar" role="img" aria-label="share of books by place">{% for p in places['items'] %}<span style="width:{{ (100 * p.n / places.n_known)|round(2) }}%" data-i="{{ loop.index0 % 8 }}" title="{{ p.place }}: {{ p.n }} books"></span>{% endfor %}</div>
+    <ol class="mixlist">{% for p in places['items'][:8] %}
+      <li><i class="sw" data-i="{{ loop.index0 % 8 }}"></i><a href="/books?place={{ p.key|urlencode }}">{{ p.place }}</a><span class="n">{{ pct(p.coverage) }}<small>{{ p.n }} of {{ places.n_known }}</small></span></li>{% endfor %}</ol>
+    {% if places.n_books > places.n_known %}<p class="note">{{ places.n_books - places.n_known }} books without a place.</p>{% endif %}
+    {% else %}<p class="muted small">No place data has been loaded for these books.</p>{% endif %}
+  </section>
 </div>
 
-<h2 id="lending">Lending</h2>
+<h2 id="lending">Lending {{ help('borrower') }}</h2>
 {% if not row.plate_key %}
 <p class="note">Lending is judged per plate, the level we take to be one physical block. {% if level == 'superclass' %}Open one of the designs below{% else %}Open one of the variants below{% endif %} to see it.</p>
 {% elif not lend.eligible %}
@@ -62,8 +70,56 @@
 <p class="note">Rule: owner in at least {{ pct(params.owner) }} of the books; borrower in {{ pct(params.lo) }}–{{ pct(params.hi) }}; at least {{ params.min_books }} books. <a href="/lending?{{ params.as_query() }}&plate={{ row.plate_key|urlencode }}">Adjust on the lending page</a>.</p>
 {% endif %}
 
+{% if level == 'cluster' and links %}
+<h2>Related clusters <small>centroid similarity</small></h2>
+<p class="note">Clusters whose average embedding is close to this one (stored by <code>etl.link_clusters</code>). Together they act as one design for the place comparison below.</p>
+<div class="sibs">{% for l in links %}
+  <a class="sib {{ 'rej' if l.rejected }}" href="{{ class_url(src, 'cluster', l.other) }}">
+    <img loading="lazy" src="{{ crop_url(l.exemplar) if l.exemplar else '' }}" alt="">
+    <b>{{ kind }}-{{ l.other }} <span class="muted">{{ '%.2f'|format(l.sim) }}</span></b>
+    <span class="muted">{{ l.n or '?' }} images, {{ l.y0 or '?' }}–{{ l.y1 or '?' }}{% if l.rejected %} · rejected{% endif %}</span>
+    {% if admin %}<form method="post" action="/admin/link" class="inline"><input type="hidden" name="src" value="{{ src }}"><input type="hidden" name="a" value="{{ value }}"><input type="hidden" name="b" value="{{ l.other }}"><input type="hidden" name="back" value="{{ request.url.path }}">
+      <button class="quiet" name="action" value="{{ 'accept' if l.rejected else 'reject' }}" onclick="event.stopPropagation()">{{ 'Restore' if l.rejected else 'Not the same' }}</button></form>{% endif %}
+  </a>{% endfor %}</div>
+{% endif %}
+
+{% if level in ('superclass', 'subclass') or (level == 'cluster' and group and group|length > 1) %}
+<h2 id="places">Places by design {{ help('contrast') }}</h2>
+{% if not contrast %}
+<p class="note">No place data has been loaded for these books, or this class has no designs below it.</p>
+{% else %}
+<p class="note">Where the books carrying each {{ 'design' if level == 'superclass' else ('variant' if level == 'subclass' else 'linked cluster') }} were printed. Two blocks of one design printed in different places point to a copy rather than a lent block. Contrast is the total-variation distance between two rows; designs with fewer than {{ pparams.min_books }} placed books are not compared.</p>
+<table class="placetable">
+  <thead><tr><th></th><th>{{ 'Design' if level == 'superclass' else ('Variant' if level == 'subclass' else 'Cluster') }}</th>
+    {% for k, name in contrast.places %}<th class="num">{{ name }}</th>{% endfor %}<th class="num">Books placed</th></tr></thead>
+  <tbody>{% for d in contrast.designs %}
+  <tr class="{{ 'dim' if d.n_known < pparams.min_books }}">
+    <td class="mini">{% if d.exemplar %}<a href="{{ class_url(src, d.level, d.url_value) }}"><img loading="lazy" src="{{ crop_url(d.exemplar) }}" alt=""></a>{% endif %}</td>
+    <td><a href="{{ class_url(src, d.level, d.url_value) }}">{{ class_label(src, d.level, d.url_value) }}</a></td>
+    {% for k, name in contrast.places %}{% set v = d.dist.get(k, 0) %}<td class="num {{ 'hot' if v >= 0.5 }}">{{ pct(v) if v else '·' }}</td>{% endfor %}
+    <td class="num">{{ d.n_known }}<span class="muted"> / {{ d.n_books }}</span></td>
+  </tr>{% endfor %}</tbody>
+</table>
+{% if contrast.pairs %}
+<h3>Pairs that differ most</h3>
+<div class="pairs">{% for p in contrast.pairs[:8] %}{% set A = contrast_ex[p.a] %}{% set B = contrast_ex[p.b] %}
+  <div class="pairrow {{ 'flag' if p.flagged }}">
+    <a href="{{ class_url(src, A.level, A.url_value) }}"><img loading="lazy" src="{{ crop_url(A.exemplar) if A.exemplar else '' }}" alt=""><span>{{ class_label(src, A.level, A.url_value) }}<br><i>{{ A.top_name or '?' }}</i></span></a>
+    <div class="pd"><b>{{ '%.2f'|format(p.d) }}</b>{% if p.flagged %}<span class="verdict later">different places — possibly a copy</span>{% else %}<span class="verdict undated">similar mix</span>{% endif %}</div>
+    <a href="{{ class_url(src, B.level, B.url_value) }}"><img loading="lazy" src="{{ crop_url(B.exemplar) if B.exemplar else '' }}" alt=""><span>{{ class_label(src, B.level, B.url_value) }}<br><i>{{ B.top_name or '?' }}</i></span></a>
+  </div>{% endfor %}</div>
+{% endif %}
+<form class="controls" method="get">
+  <input type="hidden" name="order" value="{{ order }}">
+  <label>Books with a place, at least <span class="range"><input type="range" name="place_min" min="2" max="40" step="1" value="{{ pparams.min_books }}"><output>{{ pparams.min_books }}</output></span></label>
+  <label>Contrast counted as different <span class="range"><input type="range" name="place_d" min="0.1" max="1" step="0.05" value="{{ pparams.d }}"><output>{{ pparams.d }}</output></span></label>
+  <button class="quiet">Apply</button>
+</form>
+{% endif %}
+{% endif %}
+
 {% if xref %}
-<h2>{{ 'Human labels inside this cluster' if level == 'cluster' else 'Machine clusters of these images' }}</h2>
+<h2>{{ 'Human labels inside this cluster' if level == 'cluster' else 'Machine clusters of these images' }} {{ help('cluster') }}</h2>
 <p class="xref">{% for x in xref %}
   <span class="nowrap">{% if level == 'cluster' %}<a href="{{ plate_url(x.src ~ ':' ~ x.class_path) }}">{{ x.label }}</a>
   {% else %}<a href="{{ class_url(x.src, 'cluster', x.value) }}">{{ x.kind }}-{{ x.value }}</a>{% endif %} <span class="muted">({{ x.n }})</span></span>

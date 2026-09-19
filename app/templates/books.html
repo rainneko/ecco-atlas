@@ -1,38 +1,51 @@
 {% extends "base.html" %}
-{% from "_macros.html" import strip, pagerbar %}
+{% from "_macros.html" import strip, pagerbar, sorth, help %}
 {% block title %}Books · {{ cfg.SITE_TITLE }}{% endblock %}
 {% block body %}
 <h1>Books</h1>
 <form class="searchbar" action="/books" role="search">
   <label class="sr" for="bq">Title contains</label>
-  <input id="bq" name="q" value="{{ q }}" placeholder="Title contains, e.g. fable of">
+  <input id="bq" name="q" value="{{ q }}" placeholder="Words from the title, e.g. fable bees">
   <select name="kind" aria-label="Ornament type"><option value="">Any ornament type</option>
     {% for k in cfg.KINDS %}<option value="{{ k }}" {{ 'selected' if kind == k }}>{{ k }}: {{ KIND_LABEL[k] }}</option>{% endfor %}
   </select>
+  {% if places %}<select name="place" aria-label="Place of publication"><option value="">Any place</option>
+    {% for pl in places %}<option value="{{ pl.place_key }}" {{ 'selected' if place == pl.place_key }}>{{ pl.place }} ({{ pl.n }})</option>{% endfor %}
+  </select>{% endif %}
   <label class="chk"><input type="checkbox" name="tonson" value="1" {{ 'checked' if tonson }}>Tonson or Watts in the imprint</label>
   <button>Search</button>
 </form>
-<p class="note">{{ "{:,}".format(total) }} books{% if q %} matching “{{ q }}”{% endif %}. Hover a dot to preview the ornament on that page; click it to open.</p>
+{% if fixed %}<p class="flash ok">No title contains “{{ q }}”; showing results for <b>{{ fixed }}</b>.</p>{% endif %}
+<p class="note">{{ "{:,}".format(total) }} books{% if q %} whose title contains {{ 'each of ' if q.split()|length > 1 }}“{{ fixed or q }}”{% endif %}. Every word must occur; titles with the words in that order come first. Hover a dot to preview the ornament on that page; click it to open.</p>
 
 <table class="booktable">
-  <thead><tr><th>Book</th><th>Imprint</th><th class="stripcol">Ornaments by page</th></tr></thead>
+  <thead><tr>
+    {{ sorth('Book', 'title', sort, desc, sort_base) }}
+    {{ sorth('Year', 'year', sort, desc, sort_base, 'num') }}
+    <th>Imprint {{ help('imprint') }}</th>
+    {{ sorth('Ornaments', 'n', sort, desc, sort_base, 'num') }}
+    <th class="stripcol">By page {{ help('strip') }}</th>
+  </tr></thead>
   <tbody>
   {% for r in rows %}
   <tr>
     <td class="titlecell">
       <a href="/book/{{ r.book_id }}">{{ (r.full_title or '(untitled)')[:120] }}</a>
-      <div class="muted small">{{ r.year or 'n.d.' }}{% if r.estc_id %}, ESTC {{ r.estc_id }}{% endif %}, {{ r.n_orn }} ornament{{ '' if r.n_orn == 1 else 's' }}
+      <div class="muted small">{% if r.estc_id %}ESTC {{ r.estc_id }}{% endif %}{% if r.place %} · {{ r.place }}{% endif %}
         {% if r.is_tonson %}<span class="tag" title="Imprint names Tonson or Watts">T</span>{% endif %}</div>
     </td>
-    <td class="small">
-      {% if r.publishers_raw %}<div><span class="muted">Publishers</span> {{ r.publishers_raw[:90] }}</div>{% endif %}
-      {% if r.printers_raw %}<div><span class="muted">Printers</span> {{ r.printers_raw[:90] }}</div>{% endif %}
-      {% if not r.publishers_raw and not r.printers_raw %}<span class="muted">No imprint recorded</span>{% endif %}
+    <td class="num">{{ r.year or '–' }}</td>
+    <td class="small imprintcell" title="{{ r.publishers_raw or '' }}{% if r.printers_raw %} — printed by {{ r.printers_raw }}{% endif %}">
+      {% set ag = agents.get(r.book_id, []) %}
+      {% if ag %}<div class="chips">{% for a in ag %}<a class="chip" href="/agent/{{ a.name }}">{{ a.display_name or a.name }} <i>{{ a.role }}</i></a>{% endfor %}</div>
+      {% elif r.publishers_raw or r.printers_raw %}<div class="muted">{{ (r.publishers_raw or r.printers_raw)[:80] }}</div>
+      {% else %}<span class="muted">No imprint recorded</span>{% endif %}
     </td>
+    <td class="num">{{ r.n_orn }}</td>
     <td>{% set sp = strips[r.book_id] %}{{ strip(sp[0], sp[1]) }}</td>
   </tr>
   {% else %}
-  <tr><td colspan="3" class="muted">No titles match. Try fewer words, or a word from the middle of the title.</td></tr>
+  <tr><td colspan="5" class="muted">No titles match. Try fewer words, or a word from the middle of the title.</td></tr>
   {% endfor %}
   </tbody>
 </table>

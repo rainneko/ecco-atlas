@@ -17,6 +17,9 @@
       <a href="/classes" class="{{ 'on' if path.startswith('/class') }}">Ornament classes</a>
       <a href="/agents" class="{{ 'on' if path.startswith('/agent') }}">Publishers &amp; printers</a>
       <a href="/lending" class="{{ 'on' if path.startswith('/lending') }}">Lending</a>
+      <a href="/reprints" class="{{ 'on' if path.startswith('/reprints') }}">Reprints</a>
+      <a href="/search/image" class="{{ 'on' if path.startswith('/search') }}">Image search</a>
+      <a href="/about" class="{{ 'on' if path.startswith('/about') }}">About</a>
       {% if admin %}<span class="admin">
         <a href="/admin" class="{{ 'on' if path == '/admin' }}">Admin</a>
         <a href="/admin/reports" class="{{ 'on' if path.startswith('/admin/reports') }}">Reports{% if n_open %}<span class="count">{{ n_open }}</span>{% endif %}</a>
@@ -28,8 +31,11 @@
 <main class="wrap">{% block body %}{% endblock %}</main>
 <footer class="site"><div class="wrap">
   <div>
-    <div>{{ cfg.SITE_SUBTITLE }}.</div>
+    <div>{{ cfg.SITE_SUBTITLE }}. {{ cfg.GROUP }}.</div>
     <div>Page images from the project image server; bibliographic data from ECCO and ESTC.
+      <details class="contrib"><summary>Contributors</summary>
+        {% for m in cfg.PEOPLE %}<span>{% if m.email %}<a href="mailto:{{ m.email }}">{{ m.name }}</a>{% else %}{{ m.name }}{% endif %} <i>{{ m.role }}</i></span>{% endfor %}
+        <a href="/about#people">more</a></details>
       {% if not admin %}<a class="muted" href="/admin/login">Admin</a>{% endif %}</div>
   </div>
   {% if logos %}<div class="logos">{% for f in logos %}<img src="/static/logos/{{ f }}" alt="{{ f.rsplit('.',1)[0].split('-',1)[-1] }}">{% endfor %}</div>{% endif %}

@@ -26,6 +26,15 @@ check 307 "/img/page/$ORN"
 check 200 "/api/book/$BOOK/strip"
 check 200 "/api/ornament/$ORN"
 check 200 "/api/search/books?q=essay"
+check 200 "/books?q=fabel+of&sort=year&dir=asc"
+check 200 /about
+check 200 /reprints
+check 200 "/reprints?all=1"
+check 200 /reprints.csv
+check 200 /search/image
+check 200 "/api/image-search/status"
+check 404 /search/image/deadbeefdeadbeef
+check 200 "/class/HP-ann/superclass/C014?place_min=3&place_d=0.5"
 check 200 /classes
 for tax in HP-ann:superclass HP-ann:subclass HP-ann:variant DI-ann:superclass HP-pred:cluster DI-pred:cluster TP-pred:cluster; do
   check 200 "/classes?tax=$tax&sort=span&dir=asc"

@@ -1,11 +1,25 @@
 # ECCO Ornament Atlas — Design Document
 
-Version 2.0 · supersedes v1.0. Phase 1 now covers **all seven data sources**:
-three human-annotation tables and four machine-prediction tables.
+Version 2.1 · supersedes v2.0. v2.0 covered all seven data sources; v2.1 adds
+**image search** (§9), **places of publication and reprint analysis** (§12),
+the front-page scope, glossary, publications and people (§13), a fix to the
+book-search cost (§4.7), and small layout changes (§5.2).
 
 ---
 
-## 0. What changed from v1, and why
+## 0. What changed, and why
+
+### 0.1 v2.0 → v2.1 (September 2026)
+
+| Request | Decision |
+|---|---|
+| Book search waits several seconds | Drop the whole-title trigram *similarity* branch; keep the indexed substring match and add a vocabulary-based "did you mean" for typos. 2 queries × ~2.3 s → 1 query × ~5 ms on 80k titles (§4.7). |
+| Upload an ornament and find its class and house | New `/search/image` (§9): model checkpoint stored in Postgres, embeddings loaded from four per-type files, CPU inference, a four-stage progress bar, kind confirmation, cluster ranking, house estimate. |
+| Places of publication | `book.place` from an ESTC export loaded with `--places`; place composition on class pages; subclass-versus-subclass place contrast; book-pair reprint list; cluster links from embeddings (§12). Every place feature degrades to "no place data" when the file was never loaded. |
+| Front page too modest; glossary; publications; people | §13. |
+| Imprint names clickable; sortable book list | §5.2. |
+
+### 0.2 v1 → v2.0
 
 | v1 assumption | Reality | v2 decision |
 |---|---|---|
@@ -280,6 +294,12 @@ mv_source        per source: ornaments, books
 `label_change` is what makes review work survive a data reload: after every
 load, the latest change per ornament is replayed.
 
+**Added in v2.1** (all created by `schema.sql` on the next load, no reset):
+`book.place`, `book.place_key`; `book_word` (title vocabulary for typo
+fallback); `model_store`, `embedding_model`, `ornament_embedding`,
+`cluster_centroid`, `kind_sample` (§9); `cluster_link` (§12.6);
+`mv_book_pair` (§12.4).
+
 ### 3.9 Updating the data — in one sentence
 
 Copy the new CSV into the web pod and run
@@ -400,6 +420,38 @@ threshold changes and data reloads.
 All numbers are in `config.SIM_SCORES`. Swapping in embeddings changes only
 `db.similar_ornaments`.
 
+### 4.7 Book search cost (v2.1)
+
+**Before.** `/books?q=fable of` ran two SQL queries (results, then a count),
+each with the predicate `title_norm LIKE '%fable of%' OR title_norm % 'fable of'`.
+The `%` (trigram similarity) branch is the problem: with the GIN trigram index
+the planner builds a bitmap of every row sharing *any* trigram with the query,
+which for a query containing ` of` is essentially every row, and then rechecks
+each candidate by computing `similarity()` on a ~280-character title. Cost per
+query is therefore **O(N · L)** — N = 77,848 titles, L ≈ 280 characters — twice.
+Measured on 80,000 synthetic ECCO-length titles: 2.27 s + 2.33 s ≈ **4.6 s**.
+The similarity branch also never matched anything useful: similarity of an
+8-character query to a 280-character title is ~0.02, far below the 0.3
+threshold, so all hits came from the LIKE branch anyway.
+
+**After.** One query, three parts:
+1. **Substring match, indexed.** `LIKE '%w%'` for each query word (all words
+   must occur; adjacent-phrase hits ranked first). pg_trgm answers LIKE from the
+   GIN index by intersecting the posting lists of the query's own trigrams:
+   **O(T · log N + M)** with T = trigrams in the query (≈ 8) and M = matching
+   rows; the recheck runs on M rows, not N. Measured: **3 ms** for `fable of`,
+   28 ms for `history of england` (7 hits), 0.2 ms for a miss.
+2. **Count in the same query** (`count(*) OVER ()`): no second scan.
+3. **Typo fallback on the vocabulary, not on titles.** When step 1 finds
+   nothing, each query word is matched against `book_word` — the ~50k distinct
+   words of all titles, with their own trigram index — and the closest word
+   (similarity ≥ 0.5) replaces it; the page says "Showing results for *fable*;
+   no title contains *fabel*". Similarity runs on 5–10-character words, so it is
+   **O(T · log V + M_v)** with V ≈ 50k — milliseconds. The old design paid the
+   full-title cost on every search to get this for the rare typo.
+
+`book_word` is rebuilt with the derived views (`derived.rebuild`).
+
 ---
 
 ## 5. Pages
@@ -423,13 +475,20 @@ can be bookmarked or sent to a colleague.
 
 ### 5.2 `/books` — Book search
 
-Unchanged behaviour (substring first, trigram fallback; filters for ornament
-type and Tonson/Watts), faster (counts from `mv_book`, all strips in one query),
-and:
+Substring search on every query word (§4.7), typo fallback via the title
+vocabulary, filters for ornament type, Tonson/Watts and — when loaded — place
+of publication (§12). Counts come from the same query, all page strips from one
+query. v2.1 layout changes:
 
+- **Sortable columns** with the same sort arrows as the class list: Title,
+  Year, Ornaments (default: relevance when there is a query, else year).
+- **Imprint names are links.** The imprint cell shows the parsed houses as
+  chips — `Bickerton, T.` *printer* — each linking to its `/agent/{name}`
+  page; the raw ESTC string is the cell's hover title, and is shown as text
+  only when the parser found no house in it.
+- Place of publication shown after the year when known.
 - hover card shows the ornament's label (`C067_01a` / `DI-8944`) as well as the
-  page;
-- pager with previous / next and a window around the current page.
+  page; pager with previous / next and a window around the current page.
 
 **Page strip** (kept): four rows DI / FT / HP / TP, colours
 DI `#e8833a`, FT `#e3c41e`, HP `#4a9d5f`, TP `#3d7ea6`; a count above a dot when a
@@ -628,7 +687,7 @@ not re-requested for 60 s.
 
 ```
 GET  /                                        front page
-GET  /books?q=&kind=&tonson=&p=               search
+GET  /books?q=&kind=&tonson=&place=&sort=&dir=&p=  search (v2.1: sortable, place filter)
 GET  /book/{book_id}?src=                     book detail
 GET  /ornament/{oid}?sim=hier|cluster|embed   ornament detail
 POST /ornament/{oid}/report                   suggest a correction
@@ -639,6 +698,16 @@ GET  /agent/{name}?src=&view=used|owned&joint= house detail
 GET  /agents/pair/{a}/{b}?src=&p=             two houses
 GET  /lending?owner=&lo=&hi=&min_books=&gap=&src=&agent=&plate=
 GET  /lending.csv?…                           same, as CSV
+GET  /reprints?p=  /reprints.csv               book pairs sharing plates (§12.4)
+GET  /about                                   glossary, method, publications, people (§13)
+
+GET  /search/image                            upload form (§9)
+POST /api/image-search                        multipart upload → {token}
+GET  /api/image-search/status                 {model_loaded, expected_ms}
+POST /api/image-search/{token}/embed          → type scores
+POST /api/image-search/{token}/match  {kind}  → classes, images, houses
+GET  /search/image/{token}?kind=              result page, valid 24 h
+POST /search/image/from/{oid}                 search with an existing ornament
 
 GET  /admin/login  POST /admin/login  GET /admin/logout
 GET  /admin                                   dashboard
@@ -693,66 +762,449 @@ on every control; all multi-column layouts collapse below 980 px.
 
 ---
 
-## 9. Phase 2 — model inference and embedding similarity
+## 9. Image search (v2.1)
 
-Unchanged decisions from v1: bulk embedding on LUMI (GPU), query-time embedding
-of one uploaded image on Rahti CPU, **pgvector** in Postgres for search, the
-embedder as a separate deployment so the web image stays small.
+Upload one ornament image; the atlas says what type it is, which classes it
+most resembles, and which houses those classes point to. This replaces the v2.0
+"Phase 2" plan: **no pgvector** (the cluster runs stock `postgresql:15-el8` and
+the vectors are small enough to search in NumPy), **no separate embedder
+deployment** (one ViT-S forward pass on CPU is 0.1–0.3 s), and **no GPU**.
 
-What v2 adds for it:
-- the ornament page already has the method switch (embedding shown disabled);
-- `db.similar_ornaments(oid, method)` is the only function to change;
-- the Postgres deployment runs the stock `postgresql:15-el8`; the pgvector
-  image in `deploy/postgres-pgvector/` must be rebuilt for **15** before the
-  switch (it was written for 16). Switching before loading embeddings is the
-  cheap moment.
+### 9.1 Why CPU is enough
 
-When embeddings arrive, the cluster-versus-human view on class pages (§5.6) is
-where model quality becomes visible to the team.
+| Step | CPU cost (ViT-S/16, one image) | When |
+|---|---|---|
+| Load the model from Postgres into memory | 5–15 s | once per pod start, in a background thread at startup |
+| Forward pass, one input size | 0.1–0.3 s | up to 4 passes if the four types use different input sizes |
+| Type check, kNN on 4 × 300 samples | < 5 ms | |
+| Cluster ranking, cosine on ≤ 70k centroids | 20–50 ms | |
+| Exact match on the members of the top classes | 30–100 ms | |
+
+The site serves a handful of concurrent users; a GPU would save two seconds
+per search and cost a second deployment, a driver stack and quota. Not worth
+it. The one thing to do is raise the web pod's **memory limit to 2 Gi**
+(torch + timm + model + centroids ≈ 1.2 GB resident).
+
+### 9.2 The model: where it lives and how it is loaded
+
+The checkpoint is stored **in Postgres**, like the annotated crops: no PVC
+to set up, survives pod restarts, moves with the database.
+
+```
+python -m etl.load_model --ckpt moco_vit_s_stage2.ckpt --name moco_vit_s
+```
+
+The loader opens the Lightning checkpoint, works out the architecture from
+`hyper_parameters.backbone` (falling back to the key names), keeps only the
+**online backbone** weights (`backbone.base_model.*` for MoCo/BYOL
+`BackboneWrapper`; `convnet.*` minus `fc` for the SimCLR family), and stores a
+plain state dict (~88 MB for ViT-S, 45 MB for ResNet-18) in
+`model_store(name, arch, dim, state bytea, sha256, loaded_at)`. Supported
+architectures: `vit_s` (timm `vit_small_patch16_224`, 384-d), `resnet18`
+(512-d), `resnet50` (2048-d).
+
+`app/embedding.py` reproduces the research code's inference exactly:
+grayscale → RGB repeat, ViT input interpolated to 224×224, ResNet features
+flattened, output L2-normalised (`docret.eval.uap.extract_features`). It does
+not import lightning, lightly or the training modules, so the web image only
+needs `torch` (CPU wheel), `timm`, `numpy`. The checkpoint in use is the
+Stage II `MoCoSupervised` (decided 2026-09-18).
+
+**Resize, not centre crop (fixed 2026-09-19).** The research evaluation
+transform `RandomResizedCrop(size, scale=(1,1), ratio=(1,1))` was documented
+as "equivalent to a plain resize". It is only for exactly square images:
+torchvision's fallback (verified in the 0.21 source) crops any other image to
+its centre square — a 4:1 headpiece kept 25 % of its width, a 190×210 initial
+90 %. The ECCO "none" training views (`RandomResizedCrop(scale=1)` with the
+default ratio 3/4–4/3) kept the middle 33 % of a headpiece. Effect on reported
+numbers: small on `ecco_di` (near-square initials), large on `ecco_hp`.
+
+Fix: the atlas and `export_embeddings.py` now **resize the whole box**
+(`crop: full`, the default; recorded per type in `embedding_model`, so older
+vectors marked `square` are still queried the way they were made).
+`fix_resize.py` patches the research code: `EvalSpec.resize` — `stretch` for
+the print collections (ECCO, Rey), `center_square` kept for ImageNet, where it
+is the standard protocol; `--also-training` switches the three ECCO "none"
+views to `Resize((100, 400))` (opt-in: it changes future models, and the code
+marks those lines "do not touch"). Reported evaluations should be re-run.
+"Find similar" cuts the box without padding, exactly as the export does, so an
+ornament matches itself at 1.00.
+
+### 9.3 Embedding files and tables
+
+One file per ornament type, produced on the GPU machine by
+`tools/export_embeddings.py` (added to the research repository, §9.7):
+
+```
+emb_DI.npz   emb_FT.npz   emb_HP.npz   emb_TP.npz
+```
+
+each an `np.savez_compressed` archive with arrays
+`id` (the CSV `id`, e.g. `147110010002570.TIF`), `boxes` (N×4 float32, the CSV
+boxes), `emb` (N×D float32, L2-normalised) and `meta` (a JSON string: model
+name, `dim`, `input_size`, transform description). CSV is accepted for small
+tests but 464k × 384 floats as text is 1.5 GB; npz is ~350 MB total.
+
+```
+python -m etl.load_embeddings --model moco_vit_s \
+    emb_DI.npz emb_FT.npz emb_HP.npz emb_TP.npz [--replace]
+```
+
+matches rows to ornaments by `(image_id, box_key)`, then IoU ≥ 0.9 (the
+annotation-attach logic of §3.3), stores float16 vectors in
+`ornament_embedding(oid, vec bytea)` and records the model in
+`embedding_model(name, dim, input_sizes, n, loaded_at)`. **One model per
+database at a time**: `--replace` swaps the whole set, so ResNet-18 today and
+ViT-S tomorrow is a reload, not a migration. The app compares the checkpoint's
+output width with `embedding_model.dim` and refuses to search — with a clear
+message on the page — when they differ.
+
+Derived after each load (also by `derived.rebuild`):
+- `cluster_centroid(src, value, n, vec)`: mean vector per machine cluster and
+  per human plate (variant for HP-ann, superclass for DI-/FT-ann);
+- `kind_sample`: 300 random ornaments per type, for the type check.
+
+### 9.4 Pipeline
+
+```
+upload ─▶ embed ─▶ type check ─▶ (confirm) ─▶ rank classes ─▶ exact match ─▶ houses
+  15%       60%        pause                     85%              95%         100%
+```
+
+1. **Upload** (`POST /api/image-search`): JPEG, PNG, TIFF or WebP, ≤ 8 MB.
+   The image is converted to RGB, resized to ≤ 1600 px on the long side and
+   written to `CACHE_DIR/queries/<token>.jpg` (token: 16 hex characters).
+   Everything about a query lives under that token for **24 hours** and is then
+   pruned; nothing goes into the database. A visitor can leave the page and
+   come back to `/search/image/<token>` within that time, so the page does not
+   need a "do not leave" warning — only the upload itself has a
+   `beforeunload` guard.
+2. **Embed** (`POST /api/image-search/<token>/embed`): one forward pass per
+   distinct input size in `config.EMBED_INPUT` (HP 100×400, DI/FT/TP 200×200 by
+   default — the sizes the export used, recorded in `embedding_model`). The
+   query must be preprocessed the way the stored vectors were, and the right
+   preprocessing depends on the type we do not know yet; running each type's
+   own preprocessing and comparing like with like resolves this at the cost of
+   ≤ 0.6 s.
+3. **Type check**: for each type, cosine to its 300 samples, score = mean of
+   the 10 nearest. The result is shown as four bars; the user confirms or picks
+   another type and presses Continue. (Ten samples per type would be too
+   noisy — a random 10 rarely spans a type's shapes.)
+4. **Rank classes** (`POST /api/image-search/<token>/match`, body
+   `{kind}`): cosine to every centroid of that type — machine clusters of
+   `<KIND>-pred` and human plates of `<KIND>-ann` — top 25 of each.
+5. **Exact match**: the members of those classes (a few thousand vectors) are
+   fetched from `ornament_embedding`; each class gets `max` (shown) and `mean`
+   member similarity; the 12 closest single ornaments are listed.
+6. **Houses**: for the top classes with `max ≥ 0.50`, weight
+   `w_c = (max_c − 0.50) / 0.50`; each house's estimate is
+   `Σ_c w_c · coverage(house | c) / Σ_c w_c` using `mv_plate_agent` (§4.1),
+   publishers and printers separately. Shown as bars with the sentence "based
+   on the imprints of the books that carry the N most similar classes; a
+   similar design is not proof of the same block".
+   Optional `EMBED_INDEX=full` builds a float16 memmap of *all* vectors of a
+   type (≈ 360 MB for 464k × 384) for exhaustive nearest neighbours; the
+   default centroid-first mode answers the same question for a fraction of
+   the memory.
+
+Steps 4–6 are re-run when the user changes the type; results are cached in
+`<token>.json` so the result page is server-rendered and shareable.
+
+### 9.5 Progress bar
+
+Real progress is only observable for the upload. The rest is short but not
+instant, and a bar that sits at 0 % then jumps to 99 % teaches people to
+reload. Design:
+
+- four labelled stages with fixed spans (Upload 0–15, Embedding 15–60,
+  Matching 60–95, Results 95–100); the kind confirmation is a pause at 60 %
+  with the stage list showing "step 2 of 4 — confirm the type";
+- upload uses the XHR progress event (real);
+- embedding and matching are **time-eased**: the bar advances linearly to 90 %
+  of the stage span over the stage's *expected* duration, then crawls
+  asymptotically toward the span's end, and snaps to the end when the response
+  arrives. Expected durations are a rolling average of the last 20 runs,
+  reported by `GET /api/image-search/status` together with `model_loaded`;
+  defaults 2.0 s and 0.5 s;
+- each stage shows "usually about 2 s"; after 8 s the text changes to "still
+  working — the first search after a restart loads the model, 10–20 s"; when
+  the status call says the model is not loaded yet, a preliminary "Loading the
+  model" stage is shown instead of pretending to embed.
+
+### 9.6 Page layout (`/search/image`)
+
+Same visual language as the rest of the site. Two columns on desktop:
+
+- **Left (320 px)**: the query image; "Type" panel — four bars (DI/FT/HP/TP)
+  with scores, radio buttons to override, Continue button; a note on how the
+  score was computed; "Search another image" link; the 24-hour validity note.
+- **Right, top**: "Most likely classes" — table: thumbnail, class (link),
+  human/machine tag, similarity max · mean, images, books, years, T tag.
+- **Right, middle**: "Closest single images" — gallery of 12 with year and
+  book, same thumb style as class pages.
+- **Right, bottom**: two panels, Publishers / Printers, the house estimate as
+  bars, with the caveat sentence.
+
+Entry points: "Image search" in the header; "Find similar" button on every
+ornament page (posts the ornament's own crop, so the machinery can be tested
+without an upload).
+
+### 9.7 What the research repository needs
+
+`tools/export_embeddings.py` (new file; reuses `docret.eval.backbones.
+load_backbone` and the collection transforms):
+
+```
+python -m tools.export_embeddings --csv HP.csv --kind HP \
+    --backbone moco_vit_s --ckpt <path> --input-size 100x400 --out emb_HP.npz
+```
+
+It crops each box from the page image named in the `path` column (one page
+opened per page, all its boxes cropped), or uses a crop column
+(`--crop-col img_path`) when present, applies the same deterministic
+transform as evaluation (`RandomResizedCrop(scale=1, ratio=1)` + `ToTensor`,
+no channel normalisation for ECCO), runs the frozen backbone in batches, and
+L2-normalises. `TP` has no `EvalSpec` today; the script takes `--input-size`
+so nothing else needs adding. Two remarks from reviewing the code: (1)
+`uap_callback.compute_embeddings` calls `.squeeze()`, which drops the batch
+axis for a batch of one — the export script does not use it; (2) the callback
+uses `min_matches_super=1` while `docret.eval.uap` uses 2 — inert today
+(`check_class_sizes.py`), worth aligning.
 
 ---
 
 ## 10. Deploying this version
 
-1. **Rebuild the web image** the same way as before. No Containerfile change.
-2. **Reset and load** (the schema changed; the current database holds only
-   partial HP data):
+1. **Rebuild the web image.** v2.1 adds `torch` (CPU wheel), `timm` and `numpy`
+   to `requirements.txt`; the Containerfile installs torch from the CPU wheel
+   index so the image grows by ~700 MB, not ~3 GB. Raise the `ecco-atlas`
+   Deployment's **memory limit to 2 Gi** (Web Console → the Deployment →
+   Resources) — needed only once image search is used.
+2. **Load** (a v2.0 database does not need `--reset` for v2.1; `schema.sql` adds
+   the new tables and columns on the next load):
    ```
-   python -m etl.load --reset \
-       --src HP-pred /tmp/data/HP.csv   --src DI-pred /tmp/data/DI.csv \
+   python -m etl.load --src HP-pred /tmp/data/HP.csv   --src DI-pred /tmp/data/DI.csv \
        --src FT-pred /tmp/data/FT.csv   --src TP-pred /tmp/data/TPPD.csv \
-       --src HP-ann  /tmp/data/HP_concat_annotation.csv \
-       --src DI-ann  /tmp/data/DI_annotation.csv
-   python -m etl.fetch_crops          # optional, fills crop_store
+       --src HP-ann  /tmp/data/HP_concat.csv \
+       --src DI-ann  /tmp/data/DI_annotation.csv \
+       --src FT-ann  /tmp/data/FT_annotation.csv \
+       --places /tmp/data/places.csv                  # optional, §12.1
+   python -m etl.fetch_crops                          # optional, fills crop_store
+   python -m etl.load_model --ckpt /tmp/data/moco_vit_s.ckpt --name moco_vit_s
+   python -m etl.load_embeddings --model moco_vit_s /tmp/data/emb_*.npz
+   python -m etl.link_clusters --min-sim 0.85         # §12.6, needs embeddings
    ```
-   `--reset` refuses to drop a database that holds reports or label changes
-   unless `--force-reset` is given.
+   `--reset` still refuses to drop a database that holds reports or label
+   changes unless `--force-reset` is given.
 3. **Environment variables**: none required. Optional, in the `ecco-atlas`
    Deployment's environment settings:
    - `ADMIN_USERS` = `alice:pw1,bob:pw2` for personal admin passwords;
    - `CACHE_MAX_ITEMS` (default 1000);
-   - `HERO_CREDIT` to change the caption on the front-page engraving.
-4. **Logos**: put the official University of Helsinki and COMHIS files in
+   - `HERO_CREDIT` to change the caption on the front-page engraving;
+   - `EMBED_MODEL` to pick a model when `model_store` holds several;
+   - `EMBED_INDEX=full` for exhaustive nearest neighbours (§9.4).
+4. **Logos**: official University of Helsinki and COMHIS files in
    `app/static/logos/` (SVG or PNG; shown in file-name order in the footer and
-   under the hero) and rebuild. No code change.
+   under the hero). Container path is `/app/app/static/logos/`.
+5. **People and publications** are data in `app/config.py` (`PEOPLE`,
+   `PUBLICATIONS`): fill in the e-mail addresses there.
 
 ---
 
 ## 11. Open questions
 
-1. **Image server access** from the Rahti egress IP (unchanged).
-2. **Book metadata for DI-/FT-only books** — is there an ESTC export with year
-   and imprint we can load with `--books`?
-3. **Pooling publishers and printers** for ownership (§4.1). Should ownership be
-   computed on printers only for DI/FT, where the block owner is more plausibly
-   the printer?
-4. **Lending thresholds** — 0.70 / 0.05–0.20 / 5 books are starting values. The
-   `/lending` page is the instrument for choosing them; the chosen values
-   should go into `config.LENDING_DEFAULTS`.
-5. **Cluster score** 0.95 for "same cluster" is a placeholder with no meaning
-   beyond ordering.
-6. **FT annotation** (85–90% accuracy) — load now as `FT-ann` with a warning in
-   its status line, or wait for the review?
-7. **TP IoU threshold** — choose from the histogram the loader prints.
-8. **Agent disambiguation** — surname keys merge different people; an ESTC
-   person authority list would fix this.
+Carried over: image-server egress (1), ESTC export for DI-/FT-only books (2),
+publisher/printer pooling (3), lending thresholds (4), cluster score
+placeholder (5), FT annotation status (6), TP IoU threshold (7), agent
+disambiguation (8).
+
+New in v2.1 — answers needed before the code can be finished:
+
+9. **The checkpoint**: which file — Stage I `MoCoMulti` or Stage II
+   `MoCoSupervised`, and trained on which types? The loader handles both; the
+   choice decides what "similar" means.
+10. **Export sizes**: confirm the input size per type used in
+    `export_embeddings.py` (proposed HP 100×400, others 200×200, no
+    normalisation). Whatever is used is recorded in `embedding_model` and
+    reused for queries.
+11. **Places file**: which columns does the ESTC export have (`ESTCID` +
+    `place`?), and is the place a free string ("London : printed for T. Cox")
+    or already a city? The normaliser copes with both but a sample helps.
+12. **Thresholds** for §12: place contrast 0.6, 5 books minimum; reprint pairs
+    3 shared plates on plates in ≤ 30 books; cluster link 0.85. All are
+    parameters on the pages; these are starting values.
+13. **E-mail addresses** for the people section, and whether Enes
+    Yılandiloğlu (DHQ co-author) should be listed.
+14. **The DHQ record** spells the second author "Pivovatova"; the site uses
+    "Pivovarova" (as in the SCIA paper). Correct?
+
+---
+
+## 12. Places of publication, reprints and copies (v2.1)
+
+The DHQ paper's argument — variants of one design appearing in London and in
+Dublin, Dublin reprints that reuse or copy London ornaments — needs one more
+column: where each book was printed. Everything in this section **degrades
+gracefully**: if no places file has been loaded, the panels say "No place
+data has been loaded" and nothing else changes.
+
+### 12.1 Data
+
+`book.place` (the string as given) and `book.place_key` (a normalised city
+key). Loaded with
+
+```
+python -m etl.load --places places.csv
+```
+
+The file is the ESTC place export (columns `estc_id, publication_place,
+publication_country, false_imprint, org_260_a, …, longitude, latitude`);
+columns are found loosely by name, so a three-column extract also works.
+`publication_place` is already the resolved city, so the normaliser only
+lower-cases it and strips brackets and `?`; `org_260_a` (what the title page
+says, e.g. `Londres [i.e. Paris] :`) is kept as `imprint_place`;
+`false_imprint` becomes a boolean shown as a **false imprint** tag on the book
+and ornament pages, with the claimed place in its hover text; `country`,
+`lat`, `lon` are stored for a later map. Rows with an empty place (e.g. `The
+Hague?` books, which the export leaves blank) get no place. `--places` never
+overwrites a place already loaded; `--replace-places` does.
+
+### 12.2 Where places are shown
+
+- Book list, book page, ornament page (Book section): "Place: Dublin".
+- `/books`: a place filter (the 12 most frequent places).
+- Class page: a third panel next to Publishers and Printers, **"Where it was
+  printed"**, coverage per place over the class's books with a known place,
+  same bar style (§4.1); each place links to the book list filtered by it.
+
+### 12.3 Places by design — spotting copies
+
+On a **superclass** page (and on a linked-cluster group, §12.6): a table with
+one row per subclass (or variant/cluster) and one column per place, cells as
+coverage percentages; below it, the pairs whose place profiles differ most.
+For two designs A and B with at least `min_books` books each (default 5), the
+contrast is the total-variation distance
+
+```
+d(A, B) = ½ Σ_place | p_A(place) − p_B(place) |        0 = same mix, 1 = disjoint
+```
+
+Pairs with `d ≥ 0.6` are flagged **"printed in different places — possibly a
+copy"** and shown with the two exemplars side by side (the C002_01 / C002_02
+case of the paper: London birds facing out, Dublin birds facing in). Both
+numbers are query parameters (`?place_min=5&place_d=0.6`) with defaults in
+`config.PLACE_DEFAULTS`. This is the ornament-side counterpart of lending
+(§4.5): lending asks *who* used one block; this asks *where* two blocks of one
+design were used.
+
+### 12.4 Book pairs — reprints and suspicious editions
+
+Two books that share many plates but were printed in different places are the
+book-side signal (the paper's *A New System of Agriculture*, London 1726 /
+Dublin 1727). `mv_book_pair` holds, for every pair of books that share at
+least 3 plates, the shared count, the Jaccard index over their plate sets, and
+whether their places differ. To keep the pair count bounded, only plates found
+in ≤ 30 books generate pairs (a plate in 1,000 books would alone generate
+500,000 pairs and says nothing about a specific relationship). Shown:
+
+- on the book page, the "similar books" list gains the place and a
+  **different place** tag;
+- `/reprints`: the pairs, different-place pairs first, sorted by shared plates;
+  each row shows both titles, years, places and the shared plates as
+  thumbnails; the CSV download has the same columns.
+
+### 12.5 Human classes versus machine clusters
+
+For human sources a superclass already says which designs belong together.
+For machine sources nothing does, so §12.3 needs a way to say that clusters
+`HP-8944` and `HP-10231` are "the same design".
+
+### 12.6 Cluster links (stored)
+
+```
+python -m etl.link_clusters --min-sim 0.85 [--src HP-pred]
+```
+
+computes the cosine similarity between all centroid pairs of one source
+(61,640 HP centroids × 384 dims: about 30 s in blocks of 2,000 rows) and
+stores every pair at or above the threshold in
+`cluster_link(src, a, b, sim, n_a, n_b, computed_at)`. Then:
+
+- a cluster page gets a **"Related clusters"** section (like the sibling
+  variants on a subclass page), with the similarity;
+- the connected components of the link graph act as pseudo-superclasses for
+  the place contrast of §12.3, reachable from any member cluster;
+- links are data, not recomputed per request; rerun the command after loading
+  new embeddings. An admin can reject a link in the workbench (a
+  `rejected` flag on the row) — a stored decision that survives reruns.
+
+The threshold is the one quantity here that must be chosen from the data: the
+command prints the distribution of the best similarity per cluster, and the
+class page shows the similarity on each link, so wrong links are visible.
+
+**Implemented 2026-09-18** (all of §12): `--places`; place on book, ornament
+and class pages; "Places by design" with sliders on superclass, subclass and
+linked-cluster pages; `mv_book_pair`, `/reprints`, `/reprints.csv`, pair rows
+and a *different place* tag on book pages; `etl.link_clusters`, "Related
+clusters" with admin *Not the same* / *Restore*; counts on the admin page.
+Every part shows a "no place data" sentence when `--places` has not run.
+
+---
+
+## 13. Front page scope, glossary, publications, people (v2.1)
+
+### 13.1 Scope sentence
+
+Current: "464,352 ornaments in 77,848 books printed 1616–1839, from 4,861
+publishers and printers." True but it hides the scale. Proposed lead:
+
+> Every page of Eighteenth Century Collections Online — some 200,000 books and
+> 33 million pages, the most complete collection of eighteenth-century printing
+> in English — was searched for printers' ornaments. This atlas holds what the
+> detection and clustering kept: 464,352 ornaments in 77,848 books printed
+> 1616–1839, from 4,861 publishers and printers. Human annotation covers a
+> checked subset; machine clusters cover the rest, and the two are kept apart
+> throughout.
+
+The numbers in the second sentence come from the database; the first sentence
+is fixed text (`config.SCOPE_SENTENCE`) so it can be reworded without a code
+change. "What the detection kept" is the honest qualifier: narrow rules, tiny
+clusters and illustrations were left out (§9 of the DHQ paper).
+
+### 13.2 Glossary and tooltips
+
+A small `?` circle after any term that needs it (type codes, "plate", "coverage
+share", "credit share", "owner", "borrower", "cluster", "superclass",
+"contrast"). Hover or keyboard focus opens a short definition; the circle links
+to the full entry on `/about`. Implemented as a `help(term)` macro reading
+`config.GLOSSARY`; no JavaScript needed (CSS `:hover`/`:focus-within`), so it
+works on the sortable tables and inside panels.
+
+`/about` carries the full definitions supplied by the annotation guideline —
+printers' ornaments (device PD, headpiece HP, tailpiece TP, border, other),
+illustrations (woodcut/engraving, frontispiece, other), initials (decorative
+DI, factotum FT), library stamps — and states the assumption the whole site
+rests on: **an ornament block was a physical asset of a printing or publishing
+house, added by the printer; illustrations belong to the book, not to the
+house, and are therefore not in the atlas.** This is also why the WE
+(woodcut/illustration) data was dropped in v2.1.
+
+### 13.3 Publications and people
+
+Front page, a band **"The research behind the atlas"** under *Explore*: two
+publication cards (authors, title, venue, year; links to the paper and DOI)
+each with a **Cite** button that copies the BibTeX to the clipboard and briefly
+shows "Copied" (or reveals the text for manual copying when the browser refuses
+clipboard access); below, the group line and links to the findings and the
+people. **People are deliberately not on the front page**: they sit in the
+footer behind a "Contributors" toggle (a `<details>` element) on every page,
+and in full on `/about#people` — Ruilin Wang, Lidia Pivovarova, Yann Ryan,
+Mikko Tolonen, each with a mail link when an address is given. `/about` also
+carries **"What the data has shown so far"**: five findings of the DHQ paper in
+its own hedged register (incomplete printer catalogues; Bowyer → Faulkner;
+Tonson–Watts variants in Dublin; Dublin reprints rarely copying images;
+caveats), each linking to the page of the atlas that follows it up. All of it
+is data in `config.PUBLICATIONS` and `config.PEOPLE`.
+
+BibTeX as given by the university research portal; the DHQ entry has no DOI
+in the record, the SCIA entry has `10.1007/978-3-031-95911-0_28`.

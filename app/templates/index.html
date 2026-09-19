@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_macros.html" import help %}
 {% block top %}
 <section class="hero{{ '' if hero else ' plain' }}">
   {% if hero %}<img class="hero-img" src="/static/hero.jpg"
@@ -21,7 +22,7 @@
 {% endblock %}
 
 {% block body %}
-<p class="lead" style="margin-top:28px">{{ "{:,}".format(summary.n_ornaments or 0) }} ornaments in {{ "{:,}".format(summary.n_books or 0) }} books printed {{ summary.year_min or '?' }}–{{ summary.year_max or '?' }}, from {{ "{:,}".format(summary.n_agents or 0) }} publishers and printers. Human annotations and machine clusters are kept apart throughout, so you can always tell which is which.</p>
+<p class="lead" style="margin-top:28px">{{ cfg.SCOPE_SENTENCE }} This atlas holds what the detection and clustering kept: <b>{{ "{:,}".format(summary.n_ornaments or 0) }} ornaments</b> in <b>{{ "{:,}".format(summary.n_books or 0) }} books</b> printed {{ summary.year_min or '?' }}–{{ summary.year_max or '?' }}, from {{ "{:,}".format(summary.n_agents or 0) }} publishers and printers. Human annotation covers a checked subset; machine clusters cover the rest, and the two are kept apart throughout. <a href="/about">How the data was made</a>.</p>
 
 <h2>Data in this atlas</h2>
 <table class="datatable">
@@ -46,10 +47,29 @@
   <a href="/classes"><h3>Ornament classes</h3><p>Human classes (superclass, subclass, variant) and machine clusters, each with every image in date order.</p></a>
   <a href="/agents"><h3>Publishers and printers</h3><p>Which plates each house used and held, and which houses held the same plates.</p></a>
   <a href="/lending"><h3>Lending</h3><p>Plates held mainly by one house that turn up now and then under another.</p></a>
+  <a href="/reprints"><h3>Reprints</h3><p>Books that share several blocks but were printed in different places.</p></a>
+  <a href="/search/image"><h3>Image search</h3><p>Upload an ornament and find its type, its closest classes and the houses behind them.</p></a>
 </div>
 
 <h2>Ornament types</h2>
 <ul class="kindlist">
-  {% for k in kinds %}<li><i class="dot" style="background:{{ KIND_COLOR.get(k.kind, '#888') }}"></i><b>{{ k.kind }}</b> {{ KIND_LABEL.get(k.kind, k.kind) }} <span class="muted">{{ "{:,}".format(k.n) }}</span></li>{% endfor %}
+  {% for k in kinds %}<li><i class="dot" style="background:{{ KIND_COLOR.get(k.kind, '#888') }}"></i><b>{{ k.kind }}</b> {{ KIND_LABEL.get(k.kind, k.kind) }}{{ help(k.kind) }} <span class="muted">{{ "{:,}".format(k.n) }}</span></li>{% endfor %}
 </ul>
+<p class="note">Only printers' ornaments and initials are in the atlas: blocks a house owned and reused. Illustrations belong to the book, not to the house, and are left out. <a href="/about#assumption">Why this matters</a>.</p>
+
+<h2>The research behind the atlas</h2>
+<div class="pubs">
+  {% for p in cfg.PUBLICATIONS %}
+  <article class="pub">
+    <div class="t"><a href="{{ p.url }}" rel="noopener">{{ p.title }}</a></div>
+    <div class="a">{{ p.authors }}</div>
+    <div class="v">{{ p.venue }}, {{ p.year }}{% if p.doi %} · doi:{{ p.doi }}{% endif %}</div>
+    <div class="s">{{ p.summary }}</div>
+    <div class="row"><button type="button" class="cite quiet" data-cite="{{ p.key }}" aria-label="Copy the BibTeX citation">Cite</button>
+      <span class="muted small" data-cite-msg="{{ p.key }}"></span></div>
+    <textarea hidden readonly id="bib-{{ p.key }}">{{ p.bibtex }}</textarea>
+  </article>
+  {% endfor %}
+</div>
+<p class="note">{{ cfg.GROUP }}. <a href="/about#findings">What the data has shown so far</a> · <a href="/about#people">Who made this</a>.</p>
 {% endblock %}

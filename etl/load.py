@@ -475,6 +475,76 @@ def load_book_meta(conn, path: Path):
     log(f"book metadata: {n:,} books updated from {path.name}")
 
 
+PLACE_COLS = {
+    "estc": ["estc_id", "estcid", "estc", "id"],
+    "book_id": ["book_id", "documentid", "ecco_id"],
+    "place": ["publication_place", "place", "location", "pubplace", "city"],
+    "country": ["publication_country", "country"],
+    "false_imprint": ["false_imprint", "false"],
+    "imprint_place": ["org_260_a", "imprint_place", "imprint"],
+    "lat": ["latitude", "lat"],
+    "lon": ["longitude", "lon", "lng"],
+}
+
+
+def load_places(conn, path: Path, replace=False):
+    """Places of publication from an ESTC export (DESIGN §12.1). Matches books
+    by ESTC id (or book_id when present); fills gaps unless --replace-places."""
+    df = pd.read_csv(path, dtype=str, sep=None, engine="python")
+    cols = {re.sub(r"\s+", " ", c.strip()).lower(): c for c in df.columns}
+
+    def col(field):
+        for c in PLACE_COLS[field]:
+            if c in cols:
+                return cols[c]
+        return None
+    c_estc, c_bid, c_place = col("estc"), col("book_id"), col("place")
+    if not (c_estc or c_bid) or not c_place:
+        sys.exit(f"{path}: need an ESTC id (or book_id) column and a place column; "
+                 f"columns are {list(df.columns)}")
+    c_country, c_false, c_imp, c_lat, c_lon = (col("country"), col("false_imprint"),
+                                                col("imprint_place"), col("lat"), col("lon"))
+
+    def clean(v):
+        return None if v is None or (isinstance(v, float) and np.isnan(v)) or not str(v).strip() \
+            or str(v).strip().upper() == "NA" else str(v).strip()
+    rows = []
+    for _, r in df.iterrows():
+        place = clean(r.get(c_place))
+        key = None
+        if place:
+            key = re.sub(r"[\[\]?.]", "", place.split(":")[0].split(";")[0]).strip().lower() or None
+        fi = clean(r.get(c_false)) if c_false else None
+        rows.append((clean(r.get(c_estc)) if c_estc else None,
+                     (clean(r.get(c_bid)) or "").zfill(10) if c_bid and clean(r.get(c_bid)) else None,
+                     place, key, clean(r.get(c_country)) if c_country else None,
+                     None if fi is None else fi.lower() in ("true", "1", "t", "yes"),
+                     clean(r.get(c_imp)) if c_imp else None,
+                     float(clean(r.get(c_lat))) if c_lat and clean(r.get(c_lat)) else None,
+                     float(clean(r.get(c_lon))) if c_lon and clean(r.get(c_lon)) else None))
+    cur = conn.cursor()
+    cur.execute("DROP TABLE IF EXISTS _pl")
+    cur.execute("""CREATE TEMP TABLE _pl (estc TEXT, book_id TEXT, place TEXT, place_key TEXT,
+                   country TEXT, false_imprint BOOL, imprint_place TEXT, lat FLOAT8, lon FLOAT8)""")
+    psycopg2.extras.execute_values(cur, "INSERT INTO _pl VALUES %s", rows, page_size=5000)
+    keep = "" if replace else "COALESCE(b.place, p.place)"
+    cur.execute(f"""
+        UPDATE book b SET
+            place = {keep or 'p.place'}, place_key = {'p.place_key' if replace else 'COALESCE(b.place_key, p.place_key)'},
+            country = COALESCE({'p.country, b.country' if replace else 'b.country, p.country'}),
+            false_imprint = COALESCE({'p.false_imprint, b.false_imprint' if replace else 'b.false_imprint, p.false_imprint'}),
+            imprint_place = COALESCE({'p.imprint_place, b.imprint_place' if replace else 'b.imprint_place, p.imprint_place'}),
+            lat = COALESCE({'p.lat, b.lat' if replace else 'b.lat, p.lat'}),
+            lon = COALESCE({'p.lon, b.lon' if replace else 'b.lon, p.lon'})
+        FROM _pl p WHERE (p.book_id IS NOT NULL AND p.book_id = b.book_id)
+                      OR (p.book_id IS NULL AND p.estc IS NOT NULL AND p.estc = b.estc_id)""")
+    n = cur.rowcount
+    conn.commit()
+    cur.execute("SELECT count(*) FROM book WHERE place_key IS NOT NULL")
+    log(f"places: {len(rows):,} rows in {path.name}; {n:,} books updated; "
+        f"{cur.fetchone()[0]:,} books now have a place")
+
+
 def schema_state(cur):
     cur.execute("SELECT to_regclass('ornament') IS NOT NULL")
     if not cur.fetchone()[0]:
@@ -504,8 +574,11 @@ def reset(conn, force):
         cur.execute(f"DROP MATERIALIZED VIEW IF EXISTS {mv} CASCADE")
     for t in ("v_ornament_full", "v_subclass_df"):
         cur.execute(f"DROP VIEW IF EXISTS {t} CASCADE")
+    # model_store is kept: the checkpoint is not derived from the CSVs
     for t in ("lending_review", "label_change", "report", "crop_store", "class_name",
-              "ornament_alias", "ornament", "book_agent", "agent", "book", "upload", "meta"):
+              "ornament_alias", "cluster_link", "kind_sample", "cluster_centroid",
+              "ornament_embedding", "embedding_model", "ornament", "book_agent", "agent",
+              "book", "upload", "meta"):
         cur.execute(f"DROP TABLE IF EXISTS {t} CASCADE")
     conn.commit()
     log("schema dropped")
@@ -543,6 +616,8 @@ def main():
     ap.add_argument("--force-reset", action="store_true")
     ap.add_argument("--names", type=Path)
     ap.add_argument("--books", type=Path)
+    ap.add_argument("--places", type=Path, help="ESTC export with estc_id + publication_place")
+    ap.add_argument("--replace-places", action="store_true")
     ap.add_argument("--tp-iou", type=float, default=0.9)
     ap.add_argument("--ann-iou", type=float, default=0.9)
     ap.add_argument("--no-replay", action="store_true")
@@ -591,6 +666,8 @@ def main():
         load_names(conn, a.names)
     if a.books:
         load_book_meta(conn, a.books)
+    if a.places:
+        load_places(conn, a.places, a.replace_places)
     if jobs or a.books:
         rebuild_agents(conn)
     if jobs and a.replace:
@@ -602,7 +679,9 @@ def main():
         replay(conn)
     cur.execute("ANALYZE")
     conn.commit()
-    if not a.no_derived:
+    if not a.no_derived and (jobs or a.books or a.places):
+        log(f"summary views rebuilt in {derived.rebuild(conn):.1f}s")
+    elif not a.no_derived:
         log(f"summary views rebuilt in {derived.rebuild(conn):.1f}s")
     summary(conn)
     log(f"done in {time.time() - t0:.1f}s")

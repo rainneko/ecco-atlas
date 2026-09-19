@@ -7,3 +7,6 @@ itsdangerous==2.2.0
 pillow==11.1.0
 httpx==0.28.1
 pandas==2.2.3
+numpy==2.2.1
+# image search (§9): CPU torch is installed from the PyTorch index in the Containerfile
+timm==1.0.15

@@ -12,6 +12,8 @@ CREATE TABLE IF NOT EXISTS book (
     estc_id     TEXT,
     full_title  TEXT,
     title_norm  TEXT,
+    place       TEXT,                      -- as given (v2.1, §12.1)
+    place_key   TEXT,                      -- normalised city key
     year        INTEGER,
     total_pages INTEGER,
     is_tonson   BOOLEAN NOT NULL DEFAULT FALSE,
@@ -19,7 +21,11 @@ CREATE TABLE IF NOT EXISTS book (
     publishers_raw TEXT,
     printers_raw   TEXT
 );
+-- v2.0 -> v2.1 upgrade without a reset (DESIGN §10)
+ALTER TABLE book ADD COLUMN IF NOT EXISTS place TEXT,
+                 ADD COLUMN IF NOT EXISTS place_key TEXT;
 CREATE INDEX IF NOT EXISTS book_title_trgm ON book USING gin (title_norm gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS book_place_idx  ON book (place_key) WHERE place_key IS NOT NULL;
 CREATE INDEX IF NOT EXISTS book_year_idx   ON book (year);
 CREATE INDEX IF NOT EXISTS book_estc_idx   ON book (estc_id);
 
@@ -179,3 +185,54 @@ FROM ornament o LEFT JOIN book b USING (book_id);
 
 INSERT INTO meta (key, value) VALUES ('schema_version', '2')
 ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;
+
+-- ------------------------------------------------------------------ v2.1: image search (DESIGN §9)
+CREATE TABLE IF NOT EXISTS model_store (
+    name        TEXT PRIMARY KEY,
+    arch        TEXT NOT NULL,              -- vit_s | resnet18 | resnet50
+    dim         INTEGER NOT NULL,
+    state       BYTEA NOT NULL,             -- torch.save of the backbone state dict
+    sha256      TEXT,
+    n_bytes     BIGINT,
+    source_file TEXT,
+    loaded_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS embedding_model (
+    name        TEXT PRIMARY KEY,           -- one row: the model the vectors came from
+    dim         INTEGER NOT NULL,
+    input_sizes JSONB,                      -- {"HP": {"size": [100,400], "crop": "square"}, ...}
+    n           INTEGER,
+    loaded_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS ornament_embedding (
+    oid   TEXT PRIMARY KEY REFERENCES ornament(oid) ON DELETE CASCADE,
+    vec   BYTEA NOT NULL                    -- float16, little-endian, L2-normalised
+);
+CREATE TABLE IF NOT EXISTS cluster_centroid (
+    src    TEXT NOT NULL,                   -- HP-pred (cluster) or HP-ann (plate)
+    value  TEXT NOT NULL,                   -- hc_cluster, or class_path of the plate
+    kind   TEXT NOT NULL,
+    n      INTEGER NOT NULL,
+    vec    BYTEA NOT NULL,
+    PRIMARY KEY (src, value)
+);
+CREATE INDEX IF NOT EXISTS cluster_centroid_kind ON cluster_centroid (kind);
+CREATE TABLE IF NOT EXISTS kind_sample (
+    oid   TEXT PRIMARY KEY REFERENCES ornament(oid) ON DELETE CASCADE,
+    kind  TEXT NOT NULL
+);
+-- §12.6: stored similarity between machine clusters of one source
+CREATE TABLE IF NOT EXISTS cluster_link (
+    src   TEXT NOT NULL, a TEXT NOT NULL, b TEXT NOT NULL,
+    sim   REAL NOT NULL, n_a INTEGER, n_b INTEGER,
+    rejected BOOLEAN NOT NULL DEFAULT FALSE,
+    computed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (src, a, b)
+);
+CREATE INDEX IF NOT EXISTS cluster_link_b ON cluster_link (src, b);
+-- §12.1: places of publication (loaded with --places)
+ALTER TABLE book ADD COLUMN IF NOT EXISTS country TEXT,
+                 ADD COLUMN IF NOT EXISTS false_imprint BOOLEAN,
+                 ADD COLUMN IF NOT EXISTS imprint_place TEXT,
+                 ADD COLUMN IF NOT EXISTS lat DOUBLE PRECISION,
+                 ADD COLUMN IF NOT EXISTS lon DOUBLE PRECISION;

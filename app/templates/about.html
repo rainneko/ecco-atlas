@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+{% block title %}About · {{ cfg.SITE_TITLE }}{% endblock %}
+{% block body %}
+<h1>About the atlas</h1>
+<p class="lead">{{ cfg.SCOPE_SENTENCE }} The atlas is the working instrument of a research project on how ornaments moved between the printing and publishing houses of the eighteenth century. It holds {{ "{:,}".format(summary.n_ornaments or 0) }} ornaments in {{ "{:,}".format(summary.n_books or 0) }} books, printed {{ summary.year_min or '?' }}–{{ summary.year_max or '?' }}.</p>
+
+<h2 id="assumption">The assumption everything rests on</h2>
+<div class="assumption">An ornament block was a physical asset of a printing or publishing house. It was cut once, cost money, was added to the book by the printer, and was used again and again until it wore out, was lent, sold or inherited. Two books printed from the same block are therefore linked through the trade, not through their contents. Illustrations are different: a woodcut of a battle belongs to the book it illustrates, and its reuse tells us about the text, not the house. That is why the atlas contains printers' ornaments and initials, and no illustrations.</div>
+
+<h2 id="glossary">What is in the atlas</h2>
+<div class="glossary">
+<h3 id="ornaments">Printers' ornaments</h3>
+<dl>
+  <dt>Printer's device (PD)</dt><dd>A design, sometimes a crest or emblem, identifying the printer. Usually found on the title page.</dd>
+  <dt>Headpiece (HP)</dt><dd>An ornamental design usually found at the beginning of a chapter or section of text. Different from an illustration: it usually does not illustrate something happening in the text.</dd>
+  <dt>Tailpiece (TP)</dt><dd>An ornamental design found at the end of a chapter or piece of text. In this atlas tailpieces and printers' devices form one type, <b>TP</b>.</dd>
+  <dt>Border</dt><dd>An ornamental design framing the page. Treated as a printer's ornament whenever there is a border; usually simple, unlike the elaborate frames of frontispieces.</dd>
+  <dt>Other printer's ornament</dt><dd>The above when it is not clearly a headpiece or a tailpiece. A printer's ornament is something added by the printer after the text was set, and looks like a headpiece or tailpiece rather than an illustration.</dd>
+</dl>
+<h3 id="initials">Initials</h3>
+<dl>
+  <dt>Decorative initial (DI)</dt><dd>A large decorated letter, marking off a new section of text.</dd>
+  <dt>Factotum (FT)</dt><dd>A simple decorative initial where any letter can be inserted into a blank space in the middle.</dd>
+</dl>
+<h3 id="illustrations">Not in the atlas: illustrations and stamps</h3>
+<dl>
+  <dt>Woodcut or engraving</dt><dd>An illustration made with a design cut into wood or metal, usually illustrating something in the text.</dd>
+  <dt>Frontispiece</dt><dd>A large illustration at the beginning of a book, typically with a large and sophisticated border, or a large portrait.</dd>
+  <dt>Other illustration</dt><dd>Illustrations that are not clearly a woodcut or engraving: mathematical diagrams, music, maps.</dd>
+  <dt>Library stamp</dt><dd>A modern stamp from a library.</dd>
+</dl>
+
+<h3 id="classes">Classes, plates and clusters</h3>
+<dl>
+  <dt>Superclass, subclass, variant</dt><dd>Human annotation has three levels. A <b>superclass</b> (C067) groups designs that share a motif; a <b>subclass</b> (C067_01) is one design; a <b>variant</b> (C067_01a) is what we take to be one physical block of it. The codes follow the paper: CXXX is the main class, _XX the subclass. Decorative initials and factotums are annotated at superclass level only.</dd>
+  <dt id="plates">Plate</dt><dd>The level treated as one block in every analysis of who used what: a human variant, or one machine cluster. A superclass is never a plate, because it holds several blocks.</dd>
+  <dt>Cluster</dt><dd>A group of images the model judged to come from the same design (HP-8944). Clusters are machine output and have not been checked by a person; an image with a human label is never counted under its cluster as well, so nothing is counted twice.</dd>
+</dl>
+<h3 id="shares">Shares</h3>
+<dl>
+  <dt>Coverage</dt><dd>The share of a plate's books, among those with a known imprint, that name a house. A book can name several houses, so coverages can add up to more than 100%.</dd>
+  <dt>Credit</dt><dd>A house's share of all imprint credits of a class; the bar on a class page adds up to 100%.</dd>
+</dl>
+<h3 id="lending">Ownership and lending</h3>
+<dl>
+  <dt>Owner</dt><dd>The house named in at least the owner share (default 70%) of a plate's books with a known imprint, on plates with at least five such books.</dd>
+  <dt>Borrower</dt><dd>A house named in only a few of the plate's books (default 5–20%), and never in a book that also names the owner. A borrower's book inside the owner's years of use suggests a loan; one long after suggests a sale or transfer.</dd>
+</dl>
+<h3 id="imprint">Imprints and houses</h3>
+<dl>
+  <dt>Imprint</dt><dd>The publisher and printer statement of the title page as transcribed in ESTC. Names are reduced to a surname key, so "Tonson, J.", "Tonson, Jacob" and "J. and R. Tonson" are one house. The price is that two people with one surname are merged.</dd>
+  <dt id="tonson">The T tag</dt><dd>Marks a book whose imprint names Tonson or Watts, or a plate whose largest holder is Tonson or Watts. The Tonson–Watts enterprise is the case study of the research.</dd>
+</dl>
+<h3 id="places">Places</h3>
+<dl>
+  <dt>Place of publication</dt><dd>The city from the ESTC record. Loaded separately; when it is missing the place panels say so.</dd>
+  <dt>Contrast</dt><dd>The total-variation distance between the place profiles of two designs of one superclass: 0 means the same mix of places, 1 means no place in common. Two variants of a design printed in different cities point to a copy rather than a lent block.</dd>
+</dl>
+<h3 id="search">Similarity</h3>
+<dl>
+  <dt>Cosine similarity</dt><dd>Closeness of two image embeddings, 1 meaning identical. Used by the image search. A similar design is not proof of the same block; the ranked classes are candidates for a person to check.</dd>
+</dl>
+<h3 id="strip">The page strip</h3>
+<dl>
+  <dt>Dots</dt><dd>Each dot on a book's strip is a page carrying an ornament of that type, at its position in the book. Hover to preview, click to open.</dd>
+</dl>
+</div>
+
+<h2 id="method">How the data was made</h2>
+<p class="lead">Ornaments were detected on every page of ECCO with an object detector, cropped, and represented by a contrastively trained image model (ResNet and ViT variants, trained without labels and then fine-tuned on annotated examples). Hierarchical clustering over those representations gives the machine clusters. A subset of clusters was checked and re-grouped by hand into superclasses, subclasses and variants; those human labels are kept apart from the machine clusters on every page. Book metadata comes from ECCO and ESTC. Details are in the two papers below.</p>
+
+<h2 id="findings">What the data has shown so far</h2>
+<p class="lead">Findings of the first study (DHQ 2025), which looked at headpieces. They are the reason the atlas has the pages it has.</p>
+<div class="glossary">
+<dl>
+  <dt>The catalogues of single printers were incomplete.</dt>
+  <dd>Earlier bibliographies list the ornaments of one printer — Bowyer, Richardson, Woodfall — from the books he is known to have printed. Matched against those lists, the clusters found on average more books per ornament (Woodfall: 9 in the bibliography, 34 here) and longer lives (Woodfall: 9 years there, 24 here; all headpieces here: 23 years). Ornaments travelled further than one printer's stock.</dd>
+  <dt>Blocks changed hands across the Irish Sea.</dt>
+  <dd>Three ornaments used by William Bowyer in London appear, identical, in George Faulkner's Dublin books — Faulkner had worked for Bowyer until 1729. One of them (<a href="/classes?tax=HP-ann:subclass&amp;q=C127">C127_01</a>) is recorded 50 times between 1710 and 1786: London until the early 1720s, Dublin after 1733. This is what the <a href="/lending">lending</a> page looks for at scale.</dd>
+  <dt>Variants are the interesting cases.</dt>
+  <dd>The Tonson–Watts house used designs in London whose near-identical variants turn up in Dublin — over twenty Irish examples across three decades, for instance <a href="/classes?tax=HP-ann:superclass&amp;q=C002">C002</a>, where the London block has the birds facing away from the central head and the Dublin block has them facing in. Consistent use over decades suggests something more deliberate than piracy; the atlas keeps such variants as separate blocks of one design so the question can be studied.</dd>
+  <dt>Dublin reprints did not usually copy London ornaments.</dt>
+  <dd>Across editions of the same work, Dublin editions rarely reproduce the images of the London original. The exceptions stand out: John Laurence's <i>A New System of Agriculture</i> (London 1726, Dublin 1727) copies the London headpieces closely. The place analysis of the atlas is built to find such pairs.</dd>
+  <dt>Things to be careful about.</dt>
+  <dd>Two images that look identical in ECCO's scans can still be two blocks; reissues of unsold sheets are not reuse; false imprints (a Paris book claiming London) are flagged in ESTC and are marked here where the place data has them.</dd>
+</dl>
+</div>
+
+<h2 id="publications">Publications</h2>
+<div class="pubs">
+  {% for p in cfg.PUBLICATIONS %}
+  <article class="pub">
+    <div class="t"><a href="{{ p.url }}" rel="noopener">{{ p.title }}</a></div>
+    <div class="a">{{ p.authors }}</div>
+    <div class="v">{{ p.venue }}, {{ p.year }}{% if p.doi %} · <a href="https://doi.org/{{ p.doi }}">doi:{{ p.doi }}</a>{% endif %}</div>
+    <div class="s">{{ p.summary }}</div>
+    <div class="row"><button type="button" class="cite quiet" data-cite="{{ p.key }}">Cite</button><span class="muted small" data-cite-msg="{{ p.key }}"></span></div>
+    <textarea hidden readonly id="bib-{{ p.key }}">{{ p.bibtex }}</textarea>
+  </article>
+  {% endfor %}
+</div>
+
+<h2 id="people">People</h2>
+<div class="people">
+  {% for m in cfg.PEOPLE %}<span><b>{% if m.email %}<a href="mailto:{{ m.email }}">{{ m.name }}</a>{% else %}{{ m.name }}{% endif %}</b> <span class="r">{{ m.role }}</span></span>{% endfor %}
+</div>
+<p>{{ cfg.GROUP }}. Page images are served from the project image server; bibliographic data from ECCO and ESTC.</p>
+{% endblock %}

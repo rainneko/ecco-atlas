@@ -219,5 +219,14 @@ def get_crop(o, width=None) -> bytes | None:
     return data
 
 
+def crop_exact(o) -> bytes | None:
+    """The box exactly as the embedding export cuts it: no padding, full width."""
+    page = fetch_page(o["image_id"])
+    if page is None:
+        return None
+    return encode(crop_image(page, (o["x1"], o["y1"], o["x2"], o["y2"]), pad=0),
+                  config.STORE_FULL_W, quality=92)
+
+
 def placeholder_svg(msg="image unavailable", w=300, h=120) -> str:
     return PLACEHOLDER.format(w=w, h=h, msg=msg)

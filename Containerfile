@@ -14,7 +14,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# torch from the CPU wheel index (~200 MB instead of the 2.5 GB CUDA build); timm and
+# the rest from PyPI. Image search (DESIGN §9) needs these; nothing else does.
+RUN pip install --no-cache-dir torch==2.6.0 torchvision==0.21.0 \
+        --index-url https://download.pytorch.org/whl/cpu \
+    && pip install --no-cache-dir -r requirements.txt
 
 COPY app/ ./app/
 COPY etl/ ./etl/

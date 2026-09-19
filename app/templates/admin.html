@@ -21,6 +21,17 @@
     <p class="note">Fill the store with <code>python -m etl.fetch_crops</code>.</p></section>
 </div>
 
+<div class="statgrid" style="margin-top:14px">
+  <section class="panel"><h3>Image search</h3>
+    <p class="small">{% if emb.model_loaded %}Ready: model <b>{{ emb.model }}</b>, {{ "{:,}".format(emb.n_vectors) }} vectors ({{ emb.dim }}-d).{% elif emb.error %}Not ready: {{ emb.error }}{% else %}Loading…{% endif %}</p>
+    <p class="small">Models stored: {% for m in models %}{{ m.name }} ({{ m.arch }}, {{ (m.n_bytes / 1e6)|round|int }} MB){{ ', ' if not loop.last }}{% else %}none{% endfor %}.</p>
+    <p class="note"><code>python -m etl.load_model --ckpt … --name …</code> then <code>python -m etl.load_embeddings --model … emb_*.npz</code>.</p></section>
+  <section class="panel"><h3>Cluster links and book pairs</h3>
+    <p class="small">{% for l in links %}{{ l.src }}: {{ "{:,}".format(l.n) }} links ({{ l.n_rej }} rejected){{ '; ' if not loop.last }}{% else %}No cluster links yet{% endfor %}.<br>
+      {{ "{:,}".format(pairs.n) }} book pairs, {{ "{:,}".format(pairs.n_diff) }} across different places.</p>
+    <p class="note"><code>python -m etl.link_clusters --min-sim 0.85</code> after loading embeddings; pairs rebuild with the summary tables.</p></section>
+</div>
+
 <h2>Recent changes</h2>
 <table>
   <thead><tr><th>When</th><th>Who</th><th>What</th><th>Ornament</th><th>From</th><th>To</th></tr></thead>

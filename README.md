@@ -19,10 +19,14 @@ export ADMIN_PASSWORD=letmein SECRET_KEY=dev-secret
 
 python -m etl.load --reset \
     --src HP-pred data/HP.csv    --src DI-pred data/DI.csv \
-    --src FT-pred data/FT.csv    --src TP-pred data/TPPD.csv
+    --src FT-pred data/FT.csv    --src TP-pred data/TPPD.csv \
     --src HP-ann  data/HP_concat_annotation.csv \
     --src DI-ann  data/DI_annotation.csv
 python -m etl.fetch_crops                        # optional: store annotated crops
+python -m etl.load --places data/places.csv      # optional: ESTC places of publication
+python -m etl.load_model --ckpt model.ckpt --name moco_vit_s      # image search (§9)
+python -m etl.load_embeddings --model moco_vit_s data/emb_*.npz  # from tools/export_embeddings.py
+python -m etl.link_clusters --min-sim 0.85       # related machine clusters (§12.6)
 
 uvicorn app.main:app --reload --port 8000
 ```
@@ -53,12 +57,17 @@ app/derived.py     summary views (plates, shares, class counts) and their refres
 app/lending.py     ownership and lending analysis
 app/workbench.py   the admin annotation workbench
 app/imaging.py     page fetch, crop, database crop store, LRU disk cache
+app/embedding.py   image search: preprocessing, extractor, type check, class ranking
+app/places.py      place profiles per design and their contrast
 app/main.py        routes
 app/templates/     Jinja2 pages
 app/static/        CSS, JS, fonts, hero image, logos/
 etl/schema.sql     tables, indexes, views
 etl/load.py        CSV -> Postgres (idempotent)
 etl/fetch_crops.py bulk fill of the database crop store
+etl/load_model.py  store the image model in Postgres
+etl/load_embeddings.py  load emb_<KIND>.npz files, build centroids
+etl/link_clusters.py    stored similarity between machine clusters
 etl/data/          HP superclass names (C001–C172)
 tests/             unit tests and fixture generator
 ```

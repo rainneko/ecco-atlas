@@ -1,3 +1,5 @@
+{% macro help(term) %}{% set g = cfg.GLOSSARY.get(term) %}{% if g %}<span class="help" tabindex="0" role="note" aria-label="{{ g[0] }}"><a href="/about#{{ g[1] }}" tabindex="-1">?</a><span class="tip">{{ g[0] }}<a class="more" href="/about#{{ g[1] }}">more</a></span></span>{% endif %}{% endmacro %}
+
 {% macro kdot(kind) %}<i class="dot" style="background:{{ KIND_COLOR.get(kind, '#888') }}" title="{{ KIND_LABEL.get(kind, kind) }}"></i>{% endmacro %}
 
 {% macro srcboxes(avail, sel, button='Update') %}
