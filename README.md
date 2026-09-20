@@ -75,7 +75,3 @@ etl/data/          HP superclass names (C001–C172)
 tests/             unit tests and fixture generator
 ```
 
-## Logos
-
-Put the official files in `app/static/logos/` (SVG or PNG). They appear in
-file-name order in the footer and under the front-page hero.
