@@ -46,7 +46,12 @@
   </section>
 </div>
 
-<h2 id="lending">Lending {{ help('borrower') }}</h2>
+<details class="fold" id="lending">
+  <summary><h2>Lending {{ help('borrower') }}</h2><span class="foldsum">{%- if not row.plate_key -%}Judged per plate — open a design below
+{%- elif not lend.eligible -%}Too few books with an imprint ({{ lend.n_known }})
+{%- elif not lend.owners -%}No clear owner
+{%- else -%}Owner {% for a in lend.owners %}{{ lend_agents[a].display_name }}{{ ' + ' if not loop.last }}{% endfor %} · {{ lend.events|length }} possible loan{{ '' if lend.events|length == 1 else 's' }}{%- endif -%}</span><span class="foldbtn" aria-hidden="true"></span></summary>
+  <div class="foldbody">
 {% if not row.plate_key %}
 <p class="note">Lending is judged per plate, the level we take to be one physical block. {% if level == 'superclass' %}Open one of the designs below{% else %}Open one of the variants below{% endif %} to see it.</p>
 {% elif not lend.eligible %}
@@ -71,6 +76,8 @@
 {% else %}<p class="note">No other house falls in the borrower band ({{ pct(params.lo) }}–{{ pct(params.hi) }}) with a book that does not also name the owner.</p>{% endif %}
 <p class="note">Rule: owner in at least {{ pct(params.owner) }} of the books; borrower in {{ pct(params.lo) }}–{{ pct(params.hi) }}; at least {{ params.min_books }} books. <a href="/lending?{{ params.as_query() }}&plate={{ row.plate_key|urlencode }}">Adjust on the lending page</a>.</p>
 {% endif %}
+  </div>
+</details>
 
 {% if has_coords %}
 <section id="map" class="geomap" data-key="{{ class_key }}" data-v="{{ asset_v }}" hidden aria-labelledby="map-h">
@@ -100,7 +107,10 @@
 {% endif %}
 
 {% if n_designs >= 2 %}
-<h2 id="places">Places by design {{ help('contrast') }}</h2>
+<details class="fold" id="places"{% if request.query_params.get('place_min') or request.query_params.get('place_d') %} open{% endif %}>
+  <summary><h2>Places by design {{ help('contrast') }}</h2><span class="foldsum">{%- if not contrast -%}No place of publication known
+{%- else -%}{{ contrast.designs|length }} designs · {{ contrast.n_flagged }} pair{{ '' if contrast.n_flagged == 1 else 's' }} printed in different places{%- endif -%}</span><span class="foldbtn" aria-hidden="true"></span></summary>
+  <div class="foldbody">
 {% if not contrast %}
 <p class="note">No place of publication is known for these books.</p>
 {% else %}
@@ -127,13 +137,15 @@
     <a href="{{ class_url(src, B.level, B.url_value) }}"><img loading="lazy" src="{{ crop_url(B.exemplar) if B.exemplar else '' }}" alt=""><span>{{ class_label(src, B.level, B.url_value) }}<br><i>{{ B.top_name or '?' }}</i></span></a>
   </div>{% endfor %}</div>
 {% endif %}
-<form class="controls" method="get">
+<form class="controls" method="get" action="#places">
   <input type="hidden" name="order" value="{{ order }}">
   <label>Books with a place, at least <span class="range"><input type="range" name="place_min" min="2" max="40" step="1" value="{{ pparams.min_books }}"><output>{{ pparams.min_books }}</output></span></label>
   <label>Contrast counted as different <span class="range"><input type="range" name="place_d" min="0.1" max="1" step="0.05" value="{{ pparams.d }}"><output>{{ pparams.d }}</output></span></label>
   <button class="quiet">Apply</button>
 </form>
 {% endif %}
+  </div>
+</details>
 {% endif %}
 
 {% if xref %}

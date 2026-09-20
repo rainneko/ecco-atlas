@@ -22,6 +22,7 @@ book-search cost (§4.7), and small layout changes (§5.2).
 | v2.2: About page hard to navigate; `?` texts unclear | §13.2 sidebar, one anchor per glossary term, rewritten texts. |
 | v2.3 (2026-09-20): "where did this design travel, and when?" | §12.9 map through time on every class page. |
 | v2.3: shared plates on /reprints should compare the two books; compare images too small; admin login unclear | §12.4, §12.7.1 book filter, §12.7.2 cell layout, §10 admin login. |
+| v2.4 (2026-09-20): too many top-level links; class pages too long | §8 navigation with two menus; §12.10 folded sections on class pages. |
 | Imprint names clickable; sortable book list | §5.2. |
 
 ### 0.2 v1 → v2.0
@@ -773,6 +774,35 @@ current page with a red underline: two different lines for two states). Bold
 text is wider than regular, so each link reserves its bold width (a hidden
 bold copy of its label) and the row does not shift when the pointer moves.
 
+**Navigation (v2.4).** Eight top-level links were too many for one row and
+mixed destinations with tools. Six remain:
+
+| Top level | Click goes to | Menu |
+|---|---|---|
+| Books | `/books` | — |
+| Ornaments | `/classes` | — (was "Ornament classes"; the page heading follows) |
+| Publishers & printers | `/agents` | — |
+| **Reprints ▾** | `/reprints` | **Book pairs** — books that share several blocks, across places (`/reprints`); **Lending** — blocks used by a house other than their owner (`/lending`) |
+| **Compare ▾** | `/compare` | **Compare ornaments** — two sets side by side (`/compare`); **Image search** — find an ornament from a picture (`/search/image`) |
+| About | `/about` | — |
+
+URLs do not change, so existing links keep working. "Reprints" stays the
+group name because it is the question most readers bring; the page that was
+called Reprints is renamed **Book pairs**, which says what it lists. Lending
+sits under it because both answer *how did one block reach different books*.
+
+*The menu.* A panel directly below its parent link, aligned with its right edge (the
+nav sits at the right of the header, so a left-aligned panel ran off the screen; on
+phones, where the nav wraps to the left, it aligns left), in
+the header's own colours (ink on inner pages, paper on the front page), two
+rows each with a title and one line of description, the current page marked
+by a red bar. It opens on hover (closing after 150 ms, so crossing the gap
+does not lose it) and on keyboard focus; a small ▾ button beside the label
+opens it on touch screens and for keyboard users (`aria-expanded`), Escape
+closes it. Clicking the label itself goes to the default page, so the menu
+is never in the way of the common path. The parent is shown as current (bold)
+when the reader is on either of its pages.
+
 **Help icons.** The `?` circle is styled with a selector more specific than
 any container rule (`span.help > a`), so it keeps its shape inside tab rows,
 table headers and panels — in v2.1 the tab-row style turned it into a pill on
@@ -1355,6 +1385,25 @@ thousand books; the payload stays under ~100 KB.
 no third-party request: the map works on Rahti exactly as offline. Responses
 are gzip-compressed (`GZipMiddleware`, from 1 KB up), which also shrinks
 every HTML page.
+
+### 12.10 Folded sections on class pages (v2.4)
+
+*Lending* and *Places by design* are analyses a reader opens on purpose; shown
+in full they pushed the images far down the page. Both are now folded by
+default: the heading stays visible with a one-line summary of what is inside,
+so a reader can tell whether opening is worth it —
+
+- Lending: "Owner Tonson, J. · 3 possible loans", "No clear owner", "Too few
+  books with an imprint", or "Judged per plate — open a design below";
+- Places by design: "4 designs · 2 pairs printed in different places", or
+  "No place of publication known".
+
+A click on the heading (or the *Show* button) unfolds it. A section opens by
+itself when the address points into it (`#lending`, `#places`, including the
+`?` help links and the click-menu targets) and after its own controls were
+applied (the slider form submits to `#places`). Implemented with `<details>`,
+so it works without JavaScript; the `?` inside a folded heading shows its
+tooltip without toggling the section.
 
 ### 12.8 Filtered class view
 

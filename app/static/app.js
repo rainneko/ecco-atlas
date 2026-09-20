@@ -115,6 +115,39 @@
     mark(); setTimeout(mark, 300);
   }
 
+  // Navigation menus (DESIGN §8): hover and focus open them in CSS; the ▾
+  // button opens them on touch screens and from the keyboard; Escape closes.
+  const groups = [...document.querySelectorAll('.navgroup')];
+  const setOpen = (g, open) => {
+    g.classList.toggle('open', open); g.classList.toggle('closed', !open && g.contains(document.activeElement));
+    const b = g.querySelector('.navcaret'); if (b) b.setAttribute('aria-expanded', open ? 'true' : 'false');
+  };
+  groups.forEach(g => {
+    const b = g.querySelector('.navcaret');
+    b.addEventListener('click', e => { e.stopPropagation(); const o = !g.classList.contains('open'); groups.forEach(x => setOpen(x, false)); setOpen(g, o); if (o) g.querySelector('.navpanel a').focus(); });
+    g.addEventListener('mouseleave', () => g.classList.remove('closed'));
+    g.addEventListener('focusout', e => { if (!g.contains(e.relatedTarget)) { setOpen(g, false); g.classList.remove('closed'); } });
+  });
+  document.addEventListener('click', e => { if (!e.target.closest('.navgroup')) groups.forEach(g => setOpen(g, false)); });
+  document.addEventListener('keydown', e => {
+    if (e.key !== 'Escape') return;
+    const g = groups.find(x => x.contains(document.activeElement) || x.classList.contains('open'));
+    if (g) { setOpen(g, false); g.classList.add('closed'); g.querySelector('.navcaret').focus(); }
+  });
+
+  // Folded sections (DESIGN §12.10): open the one the address points into, and
+  // let the ? inside a folded heading show its tip without toggling it.
+  const openTarget = () => {
+    const h = location.hash.slice(1); if (!h) return;
+    const el = document.getElementById(h); if (!el) return;
+    const d = el.tagName === 'DETAILS' ? el : el.closest('details.fold');
+    if (d && !d.open) { d.open = true; el.scrollIntoView(); }
+  };
+  openTarget(); addEventListener('hashchange', openTarget);
+  document.querySelectorAll('details.fold > summary .help').forEach(h => h.addEventListener('click', e => {
+    if (!e.target.closest('a.more')) e.preventDefault();
+  }));
+
   // live read-outs next to range sliders
   document.querySelectorAll('.range input[type=range]').forEach(inp => {
     const out = inp.parentElement.querySelector('output');

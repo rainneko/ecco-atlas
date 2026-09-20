@@ -222,3 +222,20 @@ PAIR_MIN_SHARED = 3          # plates two books must share to be a pair (§12.4)
 PAIR_MAX_PLATE_BOOKS = 30    # plates in more books than this do not generate pairs
 LINK_MIN_SIM = 0.85          # default threshold of etl.link_clusters (§12.6)
 LINK_MAX_GROUP = 40          # clusters shown as one linked group at most
+
+# ------------------------------------------------------------------ v2.4: navigation (DESIGN §8)
+# (label, default href, active path prefixes, menu items [(title, href, description)])
+NAV = [
+    ("Books", "/books", ("/book",), []),
+    ("Ornaments", "/classes", ("/class",), []),
+    ("Publishers & printers", "/agents", ("/agent",), []),
+    ("Reprints", "/reprints", ("/reprints", "/lending"), [
+        ("Book pairs", "/reprints", "Books that share several blocks, across places"),
+        ("Lending", "/lending", "Blocks used by a house other than their owner"),
+    ]),
+    ("Compare", "/compare", ("/compare", "/search"), [
+        ("Compare ornaments", "/compare", "Two sets of ornaments side by side"),
+        ("Image search", "/search/image", "Find an ornament from a picture"),
+    ]),
+    ("About", "/about", ("/about",), []),
+]

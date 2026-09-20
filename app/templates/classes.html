@@ -1,8 +1,8 @@
 {% extends "base.html" %}
 {% from "_macros.html" import pagerbar, sorth, kdot, help %}
-{% block title %}Ornament classes · {{ cfg.SITE_TITLE }}{% endblock %}
+{% block title %}Ornaments · {{ cfg.SITE_TITLE }}{% endblock %}
 {% block body %}
-<h1>Ornament classes</h1>
+<h1>Ornaments</h1>
 <p class="lead">Human annotation has up to three levels: a <b>superclass</b> groups designs that share a motif, a <b>subclass</b> is one design, and a <b>variant</b> is what we take to be a separate physical block of it. Machine predictions have one level, the <b>cluster</b>, named by type and number, e.g. DI-8944.</p>
 <form class="searchbar" action="/classes">
   <select name="tax" aria-label="Classification">

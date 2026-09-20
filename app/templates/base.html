@@ -13,14 +13,22 @@
   <div class="wrap">
     <a class="brand" href="/">{{ cfg.SITE_TITLE }}</a>
     <nav aria-label="Main">
-      <a data-label="Books" href="/books" class="{{ 'on' if path.startswith('/book') }}">Books</a>
-      <a data-label="Ornament classes" href="/classes" class="{{ 'on' if path.startswith('/class') }}">Ornament classes</a>
-      <a data-label="Publishers &amp; printers" href="/agents" class="{{ 'on' if path.startswith('/agent') }}">Publishers &amp; printers</a>
-      <a data-label="Lending" href="/lending" class="{{ 'on' if path.startswith('/lending') }}">Lending</a>
-      <a data-label="Reprints" href="/reprints" class="{{ 'on' if path.startswith('/reprints') }}">Reprints</a>
-      <a data-label="Compare" href="/compare" class="{{ 'on' if path.startswith('/compare') }}">Compare</a>
-      <a data-label="Image search" href="/search/image" class="{{ 'on' if path.startswith('/search') }}">Image search</a>
-      <a data-label="About" href="/about" class="{{ 'on' if path.startswith('/about') }}">About</a>
+      {% for label, href, prefixes, items in cfg.NAV %}
+      {% set on = path.startswith(prefixes) %}
+      {% if not items %}
+      <a data-label="{{ label }}" href="{{ href }}" class="{{ 'on' if on }}">{{ label }}</a>
+      {% else %}
+      <div class="navgroup {{ 'on' if on }}">
+        <a data-label="{{ label }}" href="{{ href }}" class="navtop {{ 'on' if on }}">{{ label }}</a><button type="button" class="navcaret" aria-expanded="false" aria-controls="menu-{{ loop.index }}" aria-label="{{ label }} menu"><svg viewBox="0 0 10 6" width="10" height="6" aria-hidden="true"><path d="M1 1l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.6"/></svg></button>
+        <div class="navpanel" id="menu-{{ loop.index }}" role="menu">
+          {% for title, ihref, desc in items %}
+          {% set ion = path == ihref or (ihref != '/' and path.startswith(ihref)) %}
+          <a role="menuitem" href="{{ ihref }}" class="{{ 'on' if ion }}"{% if ion %} aria-current="page"{% endif %}><b>{{ title }}</b><span>{{ desc }}</span></a>
+          {% endfor %}
+        </div>
+      </div>
+      {% endif %}
+      {% endfor %}
       {% if admin %}<span class="admin">
         <a data-label="Admin" href="/admin" class="{{ 'on' if path == '/admin' }}">Admin</a>
         <a href="/admin/reports" class="{{ 'on' if path.startswith('/admin/reports') }}">Reports{% if n_open %}<span class="count">{{ n_open }}</span>{% endif %}</a>
