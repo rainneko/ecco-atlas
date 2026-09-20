@@ -24,7 +24,7 @@
 <div class="gallery">{% for o in orns %}{{ othumb(o, 'page') }}{% endfor %}</div>
 
 {% if pairs %}
-<h2>Shares several plates with</h2>
+<h2 id="pairs">Shares several plates with</h2>
 <p class="note">Book pairs sharing at least {{ cfg.PAIR_MIN_SHARED }} plates that are each found in at most {{ cfg.PAIR_MAX_PLATE_BOOKS }} books. A pair printed in different places is a candidate reprint or copy. <a href="/reprints">All pairs</a>.</p>
 <table>
   <thead><tr><th>Book</th><th class="num">Year</th><th>Place</th><th class="num">Shared</th><th class="num">Jaccard</th><th></th></tr></thead>

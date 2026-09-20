@@ -4,6 +4,7 @@ import csv
 import io
 import logging
 import math
+from pathlib import Path
 from contextlib import asynccontextmanager
 from urllib.parse import quote, urlencode
 
@@ -37,11 +38,18 @@ async def lifespan(app: FastAPI):
     db.close_pool()
 
 
+from starlette.middleware.gzip import GZipMiddleware  # noqa: E402
+
 app = FastAPI(title=config.SITE_TITLE, lifespan=lifespan, docs_url="/api/docs",
               openapi_url="/api/openapi.json")
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
 T = Jinja2Templates(directory=str(config.BASE_DIR / "templates"))
 signer = URLSafeTimedSerializer(config.SECRET_KEY, salt="admin")
+if config.SECRET_KEY == "dev-only-change-me":
+    logging.getLogger("ecco").warning("SECRET_KEY is the development default; set it on the Deployment")
+if not (config.ADMIN_PASSWORD or ":" in config.ADMIN_USERS):
+    logging.getLogger("ecco").warning("no ADMIN_PASSWORD or ADMIN_USERS set: admin login is disabled")
 
 
 # ================================================================= template helpers
@@ -92,7 +100,21 @@ def logos():
                   if p.suffix.lower() in {".svg", ".png", ".jpg", ".jpeg", ".webp"})
 
 
+def _asset_version():
+    """Changes whenever a file under static/ changes, so browsers never keep
+    an old stylesheet or script after a deploy."""
+    import hashlib
+    h = hashlib.sha1()
+    root = Path(__file__).parent / "static"
+    for f in sorted(root.rglob("*")):
+        if f.is_file() and f.suffix in (".css", ".js", ".json"):
+            h.update(f.name.encode()); h.update(f.read_bytes())
+    return h.hexdigest()[:10]
+
+
+ASSET_V = _asset_version()
 T.env.globals.update(
+    asset_v=ASSET_V,
     cfg=config, crop_url=crop_url, class_url=class_url, class_img=class_img,
     plate_url=N.plate_url, plate_label=N.plate_label, class_label=N.class_label,
     humanize=N.humanize, orn_class_url=orn_class_url, viewer_url=imaging.viewer_url,
@@ -382,7 +404,8 @@ def legacy_class(a: str, b: str):
 
 @app.get("/class/{src}/{level}/{value:path}", response_class=HTMLResponse)
 def class_detail(request: Request, src: str, level: str, value: str, order: str = "year",
-                 place: str = "", agent: str = "", page_no: int = Query(1, alias="p", ge=1)):
+                 place: str = "", agent: str = "", book: str = "",
+                 page_no: int = Query(1, alias="p", ge=1)):
     if src in ("superclass", "subclass", "variant"):      # v1 URL
         return RedirectResponse(class_url("HP-ann", src, f"{level}/{value}"
                                           if src == "variant" else value), status_code=301)
@@ -395,10 +418,12 @@ def class_detail(request: Request, src: str, level: str, value: str, order: str 
     limit = 120
     order = order if order in ("year", "group") and level in db.GROUP_COL else "year"
     filt = None
-    if place or agent:
+    book = book if book.isalnum() else ""
+    if place or agent or book:
         members, n_filt, n_filt_books = db.class_members_filtered(
-            src, level, value, place or None, agent or None, None, limit, (page_no - 1) * limit)
-        label = compare.describe(compare.Side(src, level, value, place=place, agent=agent))
+            src, level, value, place or None, agent or None, None, limit, (page_no - 1) * limit,
+            book or None)
+        label = compare.describe(compare.Side(src, level, value, place=place, agent=agent, book=book))
         filt = dict(label=label.split(" · ", 1)[1] if " · " in label else label, n=n_filt,
                     n_books=n_filt_books, clear=class_url(src, level, value) + "#images")
         order = "year"
@@ -452,10 +477,12 @@ def class_detail(request: Request, src: str, level: str, value: str, order: str 
                    for it in place_mix["items"]}
     house_menus = {m["agent_id"]: compare.house_menu(curl, src, level, value, m["name"], m["display"])
                    for role in ("publisher", "printer") for m in comp[role]}
-    fq = urlencode({k: v for k, v in (("place", place), ("agent", agent)) if v})
+    fq = urlencode({k: v for k, v in (("place", place), ("agent", agent), ("book", book)) if v})
     return page(request, "class.html", src=src, level=level, value=value, spec=spec, row=row,
                 filt=filt, place_menus=place_menus, house_menus=house_menus,
                 compare_url=compare.url(compare.Side(src, level, value)),
+                has_coords=db.class_has_coords(src, level, value),
+                class_key=f"{src}:{level}:{value}",
                 n_designs=n_designs,
                 members=members, order=order, sup=sup, sub=sub, names=names,
                 comp=comp, n_known=n_known, places=place_mix, lend=lend, lend_agents=ag, params=params,
@@ -653,8 +680,12 @@ def api_search_books(q: str = "", limit: int = 20):
 
 # ================================================================= admin
 @app.get("/admin/login", response_class=HTMLResponse)
+def login_configured():
+    return bool(config.ADMIN_PASSWORD) or ":" in config.ADMIN_USERS
+
+
 def admin_login_form(request: Request):
-    return page(request, "admin_login.html", err=None, name="")
+    return page(request, "admin_login.html", err=None, name="", login_configured=login_configured())
 
 
 def check_password(name: str, password: str) -> bool:
@@ -669,7 +700,7 @@ def admin_login(request: Request, name: str = Form(""), password: str = Form("")
     name = name.strip()[:40]
     if not name or not check_password(name, password):
         return page(request, "admin_login.html", err="Name or password not accepted.",
-                    name=name, status_code=401)
+                    name=name, status_code=401, login_configured=login_configured())
     r = RedirectResponse("/admin", status_code=303)
     r.set_cookie(config.SESSION_COOKIE, signer.dumps({"u": name}), httponly=True,
                  samesite="lax", secure=request.url.scheme == "https",
@@ -825,7 +856,8 @@ def compare_page(request: Request):
                 counts=counts, facets=facets, labels=labels, err=err,
                 cls_label=lambda s: N.class_label(s.src, s.level, s.value) if s else "",
                 filt_url=lambda s: (class_url(s.src, s.level, s.value) + "?" + urlencode(
-                    {k: v for k, v in (("place", s.place), ("agent", s.agent)) if v}) + "#images"))
+                    {k: v for k, v in (("place", s.place), ("agent", s.agent), ("book", s.book))
+                     if v}) + "#images"))
 
 
 @app.get("/api/classes/suggest")
@@ -835,6 +867,58 @@ def api_classes_suggest(q: str = ""):
                  name=N.humanize(r["name"]) if r.get("name") else "",
                  source=config.SOURCES[r["src"]]["label"], level=r["level"], n=r["n"])
             for r in db.suggest_classes(q, 15)]
+
+
+@app.get("/api/class/geo")
+def api_class_geo(c: str = ""):
+    """Everything the map needs in one compact payload (DESIGN §12.9)."""
+    k = compare.parse_key(c)
+    if not k:
+        raise HTTPException(404)
+    src, level, value = k
+    books, agents = db.class_geo(src, level, value)
+    by_book = {}
+    for a in agents:
+        by_book.setdefault(a["book_id"], []).append((a["name"], a["display"]))
+    # places in pie order: by number of books with a known place, then key
+    counts = {}
+    for b in books:
+        if b["place_key"]:
+            counts[b["place_key"]] = counts.get(b["place_key"], 0) + 1
+    order = sorted(counts, key=lambda k_: (-counts[k_], k_))
+    info = {}
+    for b in books:
+        if b["place_key"] and b["lat"] is not None and b["place_key"] not in info:
+            info[b["place_key"]] = (b["place"], float(b["lat"]), float(b["lon"]))
+    places = [[k_, info[k_][0], round(info[k_][1], 4), round(info[k_][2], 4)]
+              for k_ in order if k_ in info]
+    pidx = {p_[0]: i for i, p_ in enumerate(places)}
+    colour = {k_: i % 8 for i, k_ in enumerate(order)}            # the pie's colours
+    houses, hidx, rows = [], {}, []
+    n_noyear = n_noplace = 0
+    for b in books:
+        if b["year"] is None:
+            n_noyear += 1
+            continue
+        if b["place_key"] not in pidx:
+            n_noplace += 1
+            continue
+        hs = []
+        for name, disp in by_book.get(b["book_id"], []):
+            if name not in hidx:
+                hidx[name] = len(houses)
+                houses.append([name, disp])
+            hs.append(hidx[name])
+        rows.append([int(b["year"]), pidx[b["place_key"]], hs, 1 if b["false_imprint"] else 0])
+    rows.sort(key=lambda r: r[0])
+    curl = class_url(src, level, value)
+    main_key = order[0] if order else None
+    menus = {p_[0]: compare.place_menu(curl, src, level, value, p_[0], p_[1], main_key,
+                                       info.get(main_key, (main_key,))[0] if main_key else None)
+             for p_ in places}
+    return {"places": places, "colours": [colour[p_[0]] for p_ in places], "houses": houses,
+            "books": rows, "n_books": len(books), "n_noyear": n_noyear, "n_noplace": n_noplace,
+            "menus": menus}
 
 
 @app.get("/api/class/facets")
@@ -851,8 +935,11 @@ def api_class_facets(c: str = ""):
 def reprints(request: Request, all: int = 0, page_no: int = Query(1, alias="p", ge=1)):
     limit = 50
     rows, total = db.book_pairs(not all, limit, (page_no - 1) * limit)
+    shared = db.shared_plates(rows)
+    menus = {(a, b, s["plate"]): compare.plate_pair_menu(s["plate"], a, b)
+             for (a, b), plates in shared.items() for s in plates}
     return page(request, "reprints.html", rows=rows, total=total, stats=db.pair_stats(),
-                all=all, shared=db.shared_plates(rows), page_no=page_no,
+                all=all, shared=shared, menus=menus, page_no=page_no,
                 pager=pager(page_no, math.ceil(total / limit)), base=f"/reprints?all={all}")
 
 

@@ -451,9 +451,15 @@ a.menulink{cursor:pointer}
 .sidelabel{font-family:var(--serif);font-size:16px;margin:0 0 4px}
 .aligned td{width:50%;vertical-align:middle}
 .aligned tr.one td{background:#fdfbf6}
-.dcell{display:flex;gap:12px;align-items:center;margin:4px 0}
-.dcell img{width:150px;height:64px;object-fit:contain;background:#f0eee9;border:1px solid var(--rule);display:block}
-.dcell.none{color:var(--rule-2);font-size:22px;justify-content:center}
+.dcell{display:flex;flex-direction:column;gap:6px;margin:6px 0}
+.dcell .dimg{display:block}
+.dcell img{width:100%;height:130px;object-fit:contain;background:#f0eee9;border:1px solid var(--rule);display:block}
+.dcell .dtext{display:flex;justify-content:space-between;gap:10px;align-items:baseline;flex-wrap:wrap}
+.twocol .dcell{margin-bottom:14px}
+.bookchip{display:inline-flex;align-items:center;gap:8px;margin:8px 0 0;padding:4px 6px 4px 12px;border-radius:99px;background:var(--rubric-soft);font-size:13px;color:var(--ink)}
+.bookchip .x{display:inline-block;width:20px;height:20px;border-radius:50%;text-align:center;line-height:19px;background:#fff;color:var(--rubric);font-weight:700}
+.bookchip .x:hover{text-decoration:none;background:var(--rubric);color:#fff}
+.dcell.none{color:var(--rule-2);font-size:22px;justify-content:center;align-items:center;min-height:130px}
 .twocol{display:grid;grid-template-columns:1fr 1fr;gap:24px;align-items:start}
 .gallery.narrow{grid-template-columns:repeat(auto-fill,minmax(130px,1fr))}
 .cmpexamples ul{padding-left:18px}
@@ -482,3 +488,42 @@ a.menulink{cursor:pointer}
   .toc summary::after{content:" ▾";color:var(--muted)}
   .toc details[open] summary::after{content:" ▴"}
 }
+
+/* ---------------------------------------------------------------- map through time (§12.9) */
+.geomap{margin-top:28px;position:relative}
+.geo-stage{position:relative;border:1px solid var(--rule);border-radius:var(--r);background:#f4f1ea;overflow:hidden;min-height:200px}
+.geo-loading{padding:40px;text-align:center}
+.geo-svg{display:block;width:100%;height:auto;cursor:grab}
+.geo-svg:active{cursor:grabbing}
+.geo-land{fill:#dcd6c9;stroke:#b9b0a0;stroke-width:.5;vector-effect:non-scaling-stroke}
+.geo-grat{fill:none;stroke:#e6e0d4;stroke-width:.6;vector-effect:non-scaling-stroke}
+.geo-dot{fill-opacity:.62;stroke:#fff}
+.geo-dot:hover{fill-opacity:.85}
+.geo-dot.pulse{animation:geo-pulse .9s ease-out}
+@keyframes geo-pulse{0%{stroke:#1c1a17;stroke-width:4px}100%{stroke:#fff}}
+.geo-arc{fill:none;stroke:#1c1a17;stroke-opacity:.6;stroke-linecap:round}
+.geo-arc.old{stroke-opacity:.25}
+.geo-arrowhead{fill:#1c1a17;fill-opacity:.7}
+.geo-tip{position:absolute;z-index:5;pointer-events:none;background:#1c1a17;color:#fff;font-size:12.5px;line-height:1.45;
+  padding:7px 10px;border-radius:4px;max-width:280px;box-shadow:0 4px 14px rgba(0,0,0,.2)}
+.geo-tip .muted{color:#c9c2b6}
+.geo-controls{display:flex;flex-wrap:wrap;gap:10px 16px;align-items:center;margin:12px 0 4px}
+.geo-play{min-width:92px}
+.geo-track{position:relative;flex:1 1 320px;height:46px}
+.geo-hist{position:absolute;left:8px;right:8px;top:0;height:26px;width:calc(100% - 16px)}
+.geo-hist rect{fill:#c9bfae}
+.geo-year{position:absolute;left:0;right:0;bottom:0;width:100%;margin:0;accent-color:var(--rubric)}
+.geo-end{font-size:12.5px;color:var(--muted);font-variant-numeric:tabular-nums}
+.geo-opt{font-size:12.5px;color:var(--muted)}
+.geo-mode{display:inline-flex;border:1px solid var(--rule-2);border-radius:99px;overflow:hidden}
+.geo-mode button{border:0;border-radius:0;background:transparent;color:var(--ink-2);padding:5px 12px;font-size:12.5px}
+.geo-mode button.on{background:var(--ink);color:#fff}
+.geo-info{display:grid;grid-template-columns:auto 1fr;gap:18px;align-items:start;margin:10px 0;
+  padding:12px 16px;background:var(--panel);border:1px solid var(--rule);border-radius:var(--r)}
+.geo-info p{margin:2px 0;font-size:14px}
+.geo-bigyear{font-family:var(--serif);font-size:40px;line-height:1;color:var(--ink)}
+.geo-new{color:var(--rubric)}
+.geo-table summary{cursor:pointer;font-size:13.5px;color:var(--rubric);margin:6px 0}
+.geo-table td .sw{margin-right:6px}
+.btn.disabled{opacity:.55;cursor:default;pointer-events:none}
+@media (max-width:700px){.geo-info{grid-template-columns:1fr}.geo-bigyear{font-size:30px}}

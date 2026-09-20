@@ -20,6 +20,8 @@ book-search cost (§4.7), and small layout changes (§5.2).
 | v2.1.1 (2026-09-20): header, `?` icon, About text, book-pair titles, file upload | §8 header, §9.4 status, §10 upload steps, §12.4, §13.2. |
 | v2.2 (2026-09-20): place pie; "what does Dublin's version look like?"; compare two sets of ornaments | §12.2 pie and click menu, §12.3 empty cases, §12.7 `/compare`, §12.8 filtered class view. |
 | v2.2: About page hard to navigate; `?` texts unclear | §13.2 sidebar, one anchor per glossary term, rewritten texts. |
+| v2.3 (2026-09-20): "where did this design travel, and when?" | §12.9 map through time on every class page. |
+| v2.3: shared plates on /reprints should compare the two books; compare images too small; admin login unclear | §12.4, §12.7.1 book filter, §12.7.2 cell layout, §10 admin login. |
 | Imprint names clickable; sortable book list | §5.2. |
 
 ### 0.2 v1 → v2.0
@@ -706,6 +708,7 @@ GET  /about                                   glossary, method, publications, pe
 GET  /compare?a=&a_place=&a_agent=&a_role=&b=…  compare two sets of ornaments (§12.7)
 GET  /api/classes/suggest?q=                   class picker suggestions
 GET  /api/class/facets?c=SRC:LEVEL:VALUE       places and houses occurring in a class
+GET  /api/class/geo?c=SRC:LEVEL:VALUE          books with year, place and houses for the map (§12.9)
 GET  /class/…?place=&agent=                    class page with a filtered gallery (§12.8)
 
 GET  /search/image                            upload form (§9)
@@ -1040,6 +1043,14 @@ uses `min_matches_super=1` while `docret.eval.uap` uses 2 — inert today
    With `WEB_CONCURRENCY=2` each of the two workers holds its own copy of the
    model and centroids (~0.6 GB each); if the pod is OOMKilled, set
    `WEB_CONCURRENCY=1`.
+   **Admin login.** Any name (it signs the change log) and the value of
+   `ADMIN_PASSWORD` on the web Deployment — not the database password.
+   Check or set it with
+   `oc set env deployment/ecco-atlas --list | grep ADMIN` and
+   `oc set env deployment/ecco-atlas ADMIN_PASSWORD='…'` (the pod restarts).
+   When no password is configured, the login page says so instead of
+   rejecting every attempt, and the log warns at start-up when `SECRET_KEY`
+   is still the development default.
 3. **Environment variables**: none required. Optional, in the `ecco-atlas`
    Deployment's environment settings:
    - `ADMIN_USERS` = `alice:pw1,bob:pw2` for personal admin passwords;
@@ -1169,6 +1180,11 @@ whether their places differ. To keep the pair count bounded, only plates found
 in ≤ 30 books generate pairs (a plate in 1,000 books would alone generate
 500,000 pairs and says nothing about a specific relationship). Shown:
 
+- on `/reprints`, each shared-plate thumbnail opens the click menu (§12.7.4):
+  **Compare the two books on this plate** (primary: the plate on both sides,
+  side A limited to book A, side B to book B — the two impressions of one
+  block next to each other), *Open the plate*, and in small text *The other
+  pairs of book A*;
 - on the book page, a table "Shares several plates with": the other book's
   **title** (linked; the ECCO id small underneath), year, place, shared plates,
   Jaccard and the tag; the "similar books" list gains the place and a
@@ -1228,6 +1244,7 @@ the same houses?* (two classes). One page answers all three.
 | place | a place key, `-key` for "every other known place", or empty | `a_place=dublin`, `a_place=-london` |
 | house | an agent name, `-name` for "books with a known imprint not naming it", or empty | `a_agent=tonson` |
 | role | `publisher`, `printer` or empty (either) | `a_role=printer` |
+| book | one ECCO id; set by links, shown as a removable chip, not a form field. A cluster side limited to a book is the cluster alone, without its related clusters: the question is then about this plate's impressions | `a_book=0486100102` |
 
 **12.7.2 Layout.** Top: two side-by-side **side cards**, each with a class
 picker (type `C002`, `mermaid`, `HP-8944` or `8944`; suggestions come from
@@ -1244,7 +1261,10 @@ Changing a class resets its filters. Under the cards, the results:
    of a cluster — §12.6; just the class itself when there is nothing below),
    left cell = the design as used on side A (its earliest image in A, images,
    books, years), right cell = the same for B, "—" where a design does not
-   occur. Rows sorted: designs on both sides, then only-A, then only-B; a line
+   occur. The image is the point of the comparison, so it spans the full
+   width of its cell (height 130 px, kept in proportion; a 4:1 headpiece
+   fills the cell), with the name and counts on one line underneath — not a
+   150 px thumbnail beside the text as in v2.2. Rows sorted: designs on both sides, then only-A, then only-B; a line
    above the table counts them ("3 designs on both sides · 1 only in London ·
    2 only in Dublin"). This is the "left: London's subclasses with a picture,
    right: Dublin's" view. When the sides are different classes, the two design
@@ -1272,6 +1292,69 @@ click, instead of leaving the page at once. Order = expected intent:
 
 The menu closes on Escape or an outside click and is keyboard reachable; the
 underlying link is the primary action, so it works without JavaScript.
+
+### 12.9 Map through time (v2.3)
+
+**Question.** Where was a design printed first, where did it appear next,
+and who used it — as a sequence, not a total. The pie (§12.2) gives the
+total; this gives the order.
+
+**Where.** Every class page, every level (superclass, subclass, variant,
+cluster): a **Map through time** button beside *Compare with…* opens a
+section under the place panels (`#map`, so the link can be shared; the
+section also opens when the page is loaded with that anchor). Closed by
+default and loaded on demand: the map code and coastlines (~120 KB
+compressed) cost nothing to readers who never open it. Hidden when no book
+of the class has coordinates; the button then reads "No coordinates loaded".
+
+**The picture.**
+- *Base map*: coastlines only, from Natural Earth (public domain) via the
+  `world-atlas` 50 m land file, ink-on-paper colours of the site. **No
+  modern borders** — they did not exist in the eighteenth century and would
+  suggest national units the data do not have. A faint 10° graticule.
+  Projection Natural Earth, fitted to the places of the class with padding
+  (at least 24° × 14°, so one city still shows its surroundings); drag and
+  wheel to zoom, *Reset view* to return.
+- *Places*: one circle per city, **area proportional to the number of books**
+  (radius ∝ √n; the largest circle of the class is 28 px), semi-transparent
+  so overlaps stay readable. Colours are the pie's colours (same order, by
+  total books), so a city has one colour on the whole page.
+- *Arrivals*: when a city appears for the first time, an arc with an arrow
+  is drawn **from the city with the most books so far** to the new city,
+  animated over 0.6 s, then kept, faded. The legend says what it means: *the
+  design is next found here* — not that a block travelled, which the data
+  cannot show (a copy and a lent block look the same on a map; the contrast
+  table and the lending page are where that question is examined).
+- *Time*: a slider over the class's years, with a small bar chart of books
+  per year behind it, a year label, **Play / Pause** (one year per 0.35 s,
+  ×2 / ×4), and a switch **Up to this year** (cumulative, default) /
+  **Around this year (±5)** (a moving window: where the design was *in use*
+  at the time). Arrow keys step a year.
+- *Under the map*, for the current year: "First printed: London, 1708";
+  "34 books in 3 places so far"; **main houses** — the three houses named in
+  most of the books shown, with counts, then "and N more". Hovering a circle
+  shows the city, its books in view, its first year and its three main
+  houses; clicking it opens the place click menu (§12.7.4), so the map leads
+  to the comparison and to the filtered images like the pie does.
+- *Honesty line*: "N of M books are not on the map: X have no year, Y no
+  place." A *Show as table* list (city, first year, books, main houses) gives
+  the same content without the map.
+- `prefers-reduced-motion`: no arc animation or pulsing; the arcs appear
+  drawn.
+
+**Data.** `GET /api/class/geo?c=SRC:LEVEL:VALUE` returns one compact array:
+places `[key, name, lat, lon]` in pie order, houses `[name, display]`, and
+one row per book `[year, place index, [house indices], false imprint]`, plus
+the counts left off and the click-menu targets. Everything else — windows,
+arcs, sizes, top houses — is computed in the browser, so dragging the slider
+never goes back to the server. The largest class in the real data is a few
+thousand books; the payload stays under ~100 KB.
+
+**Assets.** `d3` 7.9 (ISC) and `topojson-client` 3.1 (ISC) vendored under
+`static/vendor/`; `land-50m` topology under `static/geo/`. No tile server,
+no third-party request: the map works on Rahti exactly as offline. Responses
+are gzip-compressed (`GZipMiddleware`, from 1 KB up), which also shrinks
+every HTML page.
 
 ### 12.8 Filtered class view
 

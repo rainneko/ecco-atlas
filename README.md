@@ -60,6 +60,8 @@ app/workbench.py   the admin annotation workbench
 app/imaging.py     page fetch, crop, database crop store, LRU disk cache
 app/embedding.py   image search: preprocessing, extractor, type check, class ranking
 app/places.py      place profiles per design and their contrast
+app/compare.py     comparison sides, design alignment, click menus
+app/static/geomap.js  map through time (d3 + Natural Earth coastlines, vendored)
 app/main.py        routes
 app/templates/     Jinja2 pages
 app/static/        CSS, JS, fonts, hero image, logos/

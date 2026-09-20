@@ -5,7 +5,7 @@
 <title>{% block title %}{{ cfg.SITE_TITLE }}{% endblock %}</title>
 <meta name="description" content="{{ cfg.SITE_SUBTITLE }}: books, ornament classes, publishers and printers.">
 <link rel="preload" href="/static/fonts/libre-caslon-text-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin>
-<link rel="stylesheet" href="/static/style.css?v=2">
+<link rel="stylesheet" href="/static/style.css?v={{ asset_v }}">
 </head>
 <body class="{{ 'home' if request.url.path == '/' else '' }}">
 {% set path = request.url.path %}
@@ -42,6 +42,6 @@
   {% if logos %}<div class="logos">{% for f in logos %}<img src="/static/logos/{{ f }}" alt="{{ f.rsplit('.',1)[0].split('-',1)[-1] }}">{% endfor %}</div>{% endif %}
 </div></footer>
 <div id="hovercard" hidden><img alt=""><div class="hc-meta"></div></div>
-<script src="/static/app.js?v=2"></script>
+<script src="/static/app.js?v={{ asset_v }}"></script>
 {% block scripts %}{% endblock %}
 </body></html>

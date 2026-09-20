@@ -2,7 +2,11 @@
 {% block title %}Admin · {{ cfg.SITE_TITLE }}{% endblock %}
 {% block body %}
 <h1>Admin</h1>
-<p class="note">Your name is recorded with every change you make.</p>
+{% if not login_configured %}
+<p class="flash err">Admin login is not set up on this server: no password has been configured. Set the <code>ADMIN_PASSWORD</code> environment variable on the web Deployment (for example <code>oc set env deployment/ecco-atlas ADMIN_PASSWORD='…'</code>); the pod restarts and this form then accepts any name with that password.</p>
+{% else %}
+<p class="note">Any name — it is recorded with every change you make — and the site's admin password. The admin password is the <code>ADMIN_PASSWORD</code> setting of the web server, not the database password.</p>
+{% endif %}
 {% if err %}<p class="flash err">{{ err }}</p>{% endif %}
 <form method="post" action="/admin/login" class="controls">
   <label>Name <input name="name" value="{{ name }}" autocomplete="username" required autofocus></label>

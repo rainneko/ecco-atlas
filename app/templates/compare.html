@@ -11,6 +11,7 @@
     <input type="hidden" name="{{ p }}" value="{{ side.key if side else '' }}">
     <div class="sugg" id="sugg-{{ p }}" role="listbox" hidden></div>
   </label>
+  {% if side and side.book %}<p class="bookchip"><input type="hidden" name="{{ p }}_book" value="{{ side.book }}">Only in book <a href="/book/{{ side.book }}">{{ side.book }}</a> <a class="x" href="#" onclick="this.closest('.bookchip').remove();return false" aria-label="Remove the book filter" title="Remove the book filter">×</a></p>{% endif %}
   <div class="filters">
     <label>Place
       <select name="{{ p }}_place" data-facet="places">
@@ -40,9 +41,9 @@
 {% macro cell(d, src) %}
 {% if d %}
 <div class="dcell">
-  <a href="{{ class_url(src, d.dlevel, d.design) }}"><img loading="lazy" src="{{ crop_url(d.exemplar) }}" alt=""></a>
-  <div><a href="{{ class_url(src, d.dlevel, d.design) }}"><b>{{ d.label }}</b></a><br>
-    <span class="muted small">{{ d.n }} image{{ '' if d.n == 1 else 's' }}, {{ d.n_books }} book{{ '' if d.n_books == 1 else 's' }}, {{ d.y0 or '?' }}–{{ d.y1 or '?' }}</span></div>
+  <a class="dimg" href="{{ class_url(src, d.dlevel, d.design) }}"><img loading="lazy" src="{{ crop_url(d.exemplar) }}" alt="{{ d.label }}"></a>
+  <div class="dtext"><a href="{{ class_url(src, d.dlevel, d.design) }}"><b>{{ d.label }}</b></a>
+    <span class="muted small">{{ d.n }} image{{ '' if d.n == 1 else 's' }} · {{ d.n_books }} book{{ '' if d.n_books == 1 else 's' }} · {{ d.y0 or '?' }}–{{ d.y1 or '?' }}</span></div>
 </div>
 {% else %}<div class="dcell none">—</div>{% endif %}
 {% endmacro %}
@@ -115,4 +116,4 @@
 </section>
 {% endif %}
 {% endblock %}
-{% block scripts %}<script src="/static/compare.js?v=1"></script>{% endblock %}
+{% block scripts %}<script src="/static/compare.js?v={{ asset_v }}"></script>{% endblock %}

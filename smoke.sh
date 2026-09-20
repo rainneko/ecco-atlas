@@ -30,6 +30,12 @@ check 200 "/books?q=fabel+of&sort=year&dir=asc"
 check 200 /about
 check 200 /reprints
 check 200 /compare
+check 200 "/api/class/geo?c=HP-ann:superclass:C014"
+check 200 "/api/class/geo?c=HP-pred:cluster:21"
+check 404 "/api/class/geo?c=nonsense"
+check 200 "/class/HP-ann/superclass/C014?book=0100147100"
+check 200 /static/vendor/d3-7.9.0.min.js
+check 200 /static/geo/land-50m-simplified.json
 check 200 "/compare?a=HP-ann:superclass:C014&a_place=london&b=HP-ann:superclass:C014&b_place=-london"
 check 200 "/compare?a_q=C014&b_q=HP-21"
 check 200 "/compare?a=HP-ann:superclass:C014&a_agent=tonson&b=HP-ann:superclass:C014&b_agent=-tonson"

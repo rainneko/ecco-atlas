@@ -1036,7 +1036,7 @@ def agent_id_of(name):
     return r["agent_id"] if r else None
 
 
-def filter_sql(place=None, agent=None, role=None, p=None):
+def filter_sql(place=None, agent=None, role=None, p=None, book=None):
     """SQL fragment (alias o = ornament, b = book) for a place / house filter.
     `-x` means "every other known place" / "books with a known imprint not
     naming x". Returns (sql, params); sql starts with ' AND ' or is ''."""
@@ -1058,12 +1058,15 @@ def filter_sql(place=None, agent=None, role=None, p=None):
         ex = (f"EXISTS (SELECT 1 FROM book_agent x WHERE x.book_id = o.book_id "
               f"AND x.agent_id = %(f_aid)s{rsql})")
         parts.append(f"b.has_imprint AND NOT {ex}" if neg else ex)
+    if book:
+        p["f_book"] = book
+        parts.append("o.book_id = %(f_book)s")
     return ("".join(" AND " + x for x in parts), p)
 
 
 def class_members_filtered(src, level, value, place=None, agent=None, role=None,
-                           limit=120, offset=0):
-    f, p = filter_sql(place, agent, role, {"src": src, "v": value, "lim": limit, "off": offset})
+                           limit=120, offset=0, book=None):
+    f, p = filter_sql(place, agent, role, {"src": src, "v": value, "lim": limit, "off": offset}, book)
     rows = q(f"""
         SELECT o.oid, o.kind, o.page, o.book_id, o.label, o.ann_src, o.superclass,
                o.subclass, o.variant, o.class_path, o.pred_src, o.hc_cluster,
@@ -1131,14 +1134,14 @@ def suggest_classes(term, limit=15):
     return res[:limit]
 
 
-def side_rows(src, level, value, values, place, agent, role, design_sql, dlevel_sql):
+def side_rows(src, level, value, values, place, agent, role, design_sql, dlevel_sql, book=None):
     """Designs, summary and gallery of one comparison side."""
     if level == "cluster":
         cond, p = ("o.pred_src = %(src)s AND o.hc_cluster = ANY(%(vals)s) "
                    "AND NOT o.cluster_rejected"), {"src": src, "vals": list(values)}
     else:
         cond, p = class_cond(src, level), {"src": src, "v": value}
-    f, p = filter_sql(place, agent, role, p)
+    f, p = filter_sql(place, agent, role, p, book)
     designs = q(f"""
         SELECT {design_sql} AS design, {dlevel_sql} AS dlevel, count(*) AS n,
                count(DISTINCT o.book_id) AS n_books, min(b.year) AS y0, max(b.year) AS y1,
@@ -1163,3 +1166,24 @@ def side_rows(src, level, value, values, place, agent, role, design_sql, dlevel_
                    ORDER BY b.year NULLS LAST, o.book_id, o.page LIMIT 24""", p)
     return dict(designs=designs, summary=summ, top_place=top_place, top_house=top_house,
                 images=images)
+
+
+# ================================================================= map through time (§12.9)
+def class_geo(src, level, value):
+    """Rows for the map: one per book of the class, with year, place (and its
+    coordinates) and the houses its imprint names."""
+    p = {"src": src, "v": value}
+    books = q(f"""
+        SELECT DISTINCT o.book_id, b.year, b.place_key, b.place, b.lat, b.lon, b.false_imprint
+        FROM ornament o JOIN book b USING (book_id) WHERE {class_cond(src, level)}""", p)
+    agents = q(f"""
+        SELECT DISTINCT ba.book_id, a.name, coalesce(a.display_name, a.name) AS display
+        FROM ornament o JOIN book_agent ba USING (book_id) JOIN agent a USING (agent_id)
+        WHERE {class_cond(src, level)}""", p)
+    return books, agents
+
+
+def class_has_coords(src, level, value):
+    return bool(q(f"""SELECT 1 FROM ornament o JOIN book b USING (book_id)
+                      WHERE {class_cond(src, level)} AND b.lat IS NOT NULL LIMIT 1""",
+                  {"src": src, "v": value}))

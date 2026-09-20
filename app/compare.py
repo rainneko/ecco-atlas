@@ -21,6 +21,7 @@ class Side:
     place: str = ""
     agent: str = ""
     role: str = ""
+    book: str = ""
 
     @property
     def key(self):
@@ -34,6 +35,8 @@ class Side:
             d[f"{p}_agent"] = self.agent
         if self.role:
             d[f"{p}_role"] = self.role
+        if self.book:
+            d[f"{p}_book"] = self.book
         return d
 
 
@@ -67,8 +70,10 @@ def parse_side(qp, p):
     if agent and qp.get(f"{p}_agent_not") and not agent.startswith("-"):
         agent = "-" + agent
     role = qp.get(f"{p}_role") or ""
+    book = (qp.get(f"{p}_book") or "").strip()
     return Side(*k, place=place, agent=agent,
-                role=role if role in ("publisher", "printer") else "")
+                role=role if role in ("publisher", "printer") else "",
+                book=book if book.isalnum() else "")
 
 
 def url(a: Side, b: Side | None = None):
@@ -96,14 +101,18 @@ def design_exprs(side: Side):
 
 
 def cluster_values(side: Side):
-    return db.cluster_group(side.src, side.value) if side.level == "cluster" else [side.value]
+    """A cluster side includes its related clusters (§12.6), except when it is
+    limited to one book: then the question is about this plate's impressions."""
+    if side.level != "cluster" or side.book:
+        return [side.value]
+    return db.cluster_group(side.src, side.value)
 
 
 def build(side: Side):
     dsql, lsql = design_exprs(side)
     values = cluster_values(side)
     r = db.side_rows(side.src, side.level, side.value, values, side.place, side.agent,
-                     side.role, dsql, lsql)
+                     side.role, dsql, lsql, side.book)
     for d in r["designs"]:
         d["label"] = N.class_label(side.src, d["dlevel"], d["design"])
     r["designs"].sort(key=lambda d: N.natural_key(d["design"]))
@@ -135,6 +144,10 @@ def describe(side: Side, n_related=0):
         hn = house_name(side.agent.lstrip("-"))
         role = f" as {side.role}" if side.role else ""
         parts.append(f"not naming {hn}{role}" if side.agent.startswith("-") else f"{hn}{role}")
+    if side.book:
+        b = db.q("SELECT full_title, year FROM book WHERE book_id = %s", (side.book,), one=True)
+        t = (b and (b["full_title"] or "")) or side.book
+        parts.append(f"in {t[:60]}{'…' if len(t) > 60 else ''}" + (f" ({b['year']})" if b and b["year"] else ""))
     return " · ".join(parts)
 
 
@@ -177,3 +190,16 @@ def house_menu(cls_url, src, level, value, name, display):
                 secondary=(f"Only {display}'s images of this class",
                            f"{cls_url}?{urlencode({'agent': name})}#images"),
                 more=(f"Learn more about {display}", f"/agent/{name}"))
+
+
+def plate_pair_menu(plate, a_book, b_book):
+    """Click menu for a shared plate on /reprints (§12.4): the plate on both
+    sides, each side limited to one of the two books."""
+    src, level, value = N.plate_class(plate)
+    a = Side(src, level, value, book=a_book)
+    b = Side(src, level, value, book=b_book)
+    lab = N.plate_label(plate)
+    return dict(title=lab,
+                primary=(f"Compare the two books on {lab}", url(a, b)),
+                secondary=(f"Open {lab}", N.plate_url(plate)),
+                more=("The other pairs of the first book", f"/book/{a_book}#pairs"))

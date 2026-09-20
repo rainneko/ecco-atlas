@@ -26,6 +26,7 @@
     </div>
     <div class="inline">
       <a class="btn quiet" href="{{ compare_url }}">Compare with…</a>
+      {% if has_coords %}<a class="btn quiet" href="#map" data-open-map>Map through time</a>{% else %}<span class="btn quiet disabled" title="No book of this class has coordinates yet">No coordinates loaded</span>{% endif %}
       {% if admin and level in ('superclass', 'subclass', 'cluster') %}<a class="btn quiet" href="/admin/workbench/{{ src }}/{{ level }}/{{ value }}">Open in the workbench</a>{% endif %}
     </div>
   </div>
@@ -69,6 +70,20 @@
 </table>
 {% else %}<p class="note">No other house falls in the borrower band ({{ pct(params.lo) }}–{{ pct(params.hi) }}) with a book that does not also name the owner.</p>{% endif %}
 <p class="note">Rule: owner in at least {{ pct(params.owner) }} of the books; borrower in {{ pct(params.lo) }}–{{ pct(params.hi) }}; at least {{ params.min_books }} books. <a href="/lending?{{ params.as_query() }}&plate={{ row.plate_key|urlencode }}">Adjust on the lending page</a>.</p>
+{% endif %}
+
+{% if has_coords %}
+<section id="map" class="geomap" data-key="{{ class_key }}" data-v="{{ asset_v }}" hidden aria-labelledby="map-h">
+  <h2 id="map-h">Map through time {{ help('place_share') }}</h2>
+  <p class="note">Where the books carrying {{ class_label(src, level, value) }} were printed, year by year. Drag the slider or press Play; hover a city for its main houses, click it to compare.</p>
+  <div class="geo-stage"></div>
+  <div class="geo-tip" hidden></div>
+  <div class="geo-controls"></div>
+  <div class="geo-info"></div>
+  <details class="geo-table"></details>
+  <p class="note geo-foot"></p>
+  <noscript><p class="note">The map needs JavaScript. The pie above gives the same places as totals.</p></noscript>
+</section>
 {% endif %}
 
 {% if level == 'cluster' and links %}
@@ -171,3 +186,5 @@
 {% endif %}
 </div>
 {% endblock %}
+
+{% block scripts %}<script src="/static/geomap.js?v={{ asset_v }}"></script>{% endblock %}

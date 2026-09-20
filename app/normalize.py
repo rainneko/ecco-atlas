@@ -163,6 +163,20 @@ def plate_label(plate: str) -> str:
     return parts[0]
 
 
+def plate_class(plate: str):
+    """(src, level, value) of a plate, the same mapping as plate_url."""
+    src, _, rest = plate.partition(":")
+    s = config.SOURCES.get(src, {})
+    if s.get("family") == "pred":
+        return src, "cluster", rest
+    parts = rest.split("/")
+    if len(parts) == 3:
+        return src, "variant", rest
+    if len(parts) == 2:
+        return src, "subclass", parts[1]
+    return src, "superclass", parts[0]
+
+
 def plate_url(plate: str) -> str:
     src, _, rest = plate.partition(":")
     s = config.SOURCES.get(src, {})
