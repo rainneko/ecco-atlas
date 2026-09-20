@@ -30,6 +30,7 @@ check 200 "/books?q=fabel+of&sort=year&dir=asc"
 check 200 /about
 check 200 /reprints
 check 200 /compare
+check 200 /admin/login
 check 200 "/api/class/geo?c=HP-ann:superclass:C014"
 check 200 "/api/class/geo?c=HP-pred:cluster:21"
 check 404 "/api/class/geo?c=nonsense"
