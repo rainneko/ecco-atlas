@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% from "_macros.html" import pagerbar, sorth, kdot, help %}
+{% block title %}Ornaments · {{ cfg.SITE_TITLE }}{% endblock %}
+{% block body %}
+<h1>Ornaments</h1>
+<p class="lead">Human annotation has up to three levels: a <b>superclass</b> groups designs that share a motif, a <b>subclass</b> is one design, and a <b>variant</b> is what we take to be a separate physical block of it. Machine predictions have one level, the <b>cluster</b>, named by type and number, e.g. DI-8944.</p>
+<form class="searchbar" action="/classes">
+  <select name="tax" aria-label="Classification">
+    {% for fam, label in [('ann', 'Human annotation'), ('pred', 'Machine prediction')] %}
+    <optgroup label="{{ label }}">{% for o in opts if o.family == fam %}
+      <option value="{{ o.src }}:{{ o.level }}" {{ 'selected' if tax == o.src ~ ':' ~ o.level }}>{{ o.label }} ({{ "{:,}".format(o.n) }})</option>{% endfor %}
+    </optgroup>{% endfor %}
+  </select>
+  <input name="q" value="{{ q }}" placeholder="Filter by id or name, e.g. C067 or eagle">
+  <button>Show</button>
+</form>
+{% if tax %}
+<p class="note">{{ "{:,}".format(total) }} {{ level }}{{ 'es' if level in ('superclass','subclass') else 's' }}{% if level == 'cluster' and hc %} (column {{ hc }}){% endif %}. Click a column heading to sort. <span class="tag t-own">T</span> marks plates whose largest holder is Tonson or Watts{{ help('T') }}.</p>
+<table>
+  <thead><tr><th></th>
+    {{ sorth(level|capitalize, 'name', sort, desc, sort_base) }}
+    {{ sorth('Images', 'n', sort, desc, sort_base, 'num') }}
+    {{ sorth('Books', 'books', sort, desc, sort_base, 'num') }}
+    {{ sorth('First year', 'first', sort, desc, sort_base, 'num') }}
+    {{ sorth('Last year', 'last', sort, desc, sort_base, 'num') }}
+    {{ sorth('Span', 'span', sort, desc, sort_base, 'num') }}
+  </tr></thead>
+  <tbody>
+  {% for r in rows %}
+  <tr>
+    <td class="mini"><a href="{{ class_url(src, level, r.value) }}"><img loading="lazy" src="{{ crop_url(r.exemplar) }}" alt=""></a></td>
+    <td style="min-width:13em">{{ kdot(r.kind) }}<a href="{{ class_url(src, level, r.value) }}">{{ class_label(src, level, r.value) }}</a>
+      {% if r.t_owned %}<span class="tag t-own" title="Tonson or Watts hold the largest share">T</span>{% endif %}
+      {% if r.name %}<div class="small name">{{ humanize(r.name) }}</div>
+      {% elif r.parent_name %}<div class="small muted">in {{ humanize(r.parent_name) }}</div>{% endif %}</td>
+    <td class="num">{{ "{:,}".format(r.n) }}</td><td class="num">{{ "{:,}".format(r.n_books) }}</td>
+    <td class="num">{{ r.y0 or '–' }}</td><td class="num">{{ r.y1 or '–' }}</td>
+    <td class="num">{{ r.span if r.span is not none else '–' }}</td>
+  </tr>
+  {% else %}<tr><td colspan="7" class="muted">Nothing matches “{{ q }}”.</td></tr>{% endfor %}
+  </tbody>
+</table>
+{{ pagerbar(pager, page_no, base) }}
+{% else %}<p class="muted">No classes loaded yet.</p>{% endif %}
+{% endblock %}
