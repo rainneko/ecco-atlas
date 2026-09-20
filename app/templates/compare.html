@@ -1,0 +1,118 @@
+{% extends "base.html" %}
+{% from "_macros.html" import othumb, kdot, help %}
+{% block title %}Compare · {{ cfg.SITE_TITLE }}{% endblock %}
+
+{% macro sidecard(p, side, f) %}
+<fieldset class="side">
+  <legend>Side {{ p|upper }}</legend>
+  <label class="picker">Class or cluster
+    <input type="text" name="{{ p }}_q" value="{{ cls_label(side) }}" autocomplete="off" placeholder="C002, C014_02, mermaid, HP-8944"
+           data-picker="{{ p }}" aria-autocomplete="list" aria-controls="sugg-{{ p }}">
+    <input type="hidden" name="{{ p }}" value="{{ side.key if side else '' }}">
+    <div class="sugg" id="sugg-{{ p }}" role="listbox" hidden></div>
+  </label>
+  <div class="filters">
+    <label>Place
+      <select name="{{ p }}_place" data-facet="places">
+        <option value="">Any place</option>
+        {% if f %}{% for pl in f.places %}<option value="{{ pl.key }}" {{ 'selected' if side and side.place.lstrip('-') == pl.key }}>{{ pl.name }} ({{ pl.n }})</option>{% endfor %}{% endif %}
+      </select>
+      <span class="chk"><input type="checkbox" name="{{ p }}_place_not" value="1" {{ 'checked' if side and side.place.startswith('-') }}>every place except this</span>
+    </label>
+    <label>Publisher or printer
+      <select name="{{ p }}_agent" data-facet="agents">
+        <option value="">Any house</option>
+        {% if f %}{% for ag in f.agents %}<option value="{{ ag.name }}" {{ 'selected' if side and side.agent.lstrip('-') == ag.name }}>{{ ag.display or ag.name }} ({{ ag.n }})</option>{% endfor %}{% endif %}
+      </select>
+      <span class="chk"><input type="checkbox" name="{{ p }}_agent_not" value="1" {{ 'checked' if side and side.agent.startswith('-') }}>every house except this</span>
+    </label>
+    <label>as
+      <select name="{{ p }}_role">
+        <option value="">publisher or printer</option>
+        <option value="publisher" {{ 'selected' if side and side.role == 'publisher' }}>publisher</option>
+        <option value="printer" {{ 'selected' if side and side.role == 'printer' }}>printer</option>
+      </select>
+    </label>
+  </div>
+</fieldset>
+{% endmacro %}
+
+{% macro cell(d, src) %}
+{% if d %}
+<div class="dcell">
+  <a href="{{ class_url(src, d.dlevel, d.design) }}"><img loading="lazy" src="{{ crop_url(d.exemplar) }}" alt=""></a>
+  <div><a href="{{ class_url(src, d.dlevel, d.design) }}"><b>{{ d.label }}</b></a><br>
+    <span class="muted small">{{ d.n }} image{{ '' if d.n == 1 else 's' }}, {{ d.n_books }} book{{ '' if d.n_books == 1 else 's' }}, {{ d.y0 or '?' }}–{{ d.y1 or '?' }}</span></div>
+</div>
+{% else %}<div class="dcell none">—</div>{% endif %}
+{% endmacro %}
+
+{% macro summary(r, side) %}
+<div class="sumcol">
+  <p class="sidelabel">{{ r.label }}</p>
+  {% if r.summary.n %}
+  <div class="meta"><span><b>Images</b>{{ "{:,}".format(r.summary.n) }}</span><span><b>Books</b>{{ "{:,}".format(r.summary.n_books) }}</span><span><b>Years</b>{{ r.summary.y0 or '?' }}–{{ r.summary.y1 or '?' }}</span></div>
+  <p class="small">{% if r.top_place %}<span class="muted">Mostly printed in</span> {% for t in r.top_place %}{{ t.name }} ({{ t.n }}){{ ', ' if not loop.last }}{% endfor %}<br>{% endif %}
+    {% if r.top_house %}<span class="muted">Houses</span> {% for t in r.top_house %}<a href="/agent/{{ t.name }}">{{ t.display or t.name }}</a> ({{ t.n }}){{ ', ' if not loop.last }}{% endfor %}{% endif %}</p>
+  {% else %}<p class="muted">Nothing in this class matches these filters.</p>{% endif %}
+</div>
+{% endmacro %}
+
+{% block body %}
+<h1>Compare</h1>
+<p class="lead">Put two sets of ornaments next to each other: one class printed in two places, one house's use of a design against everyone else's, or two different classes. Pick a class on each side and, if you like, narrow it to a place or a house.</p>
+
+<form class="cmpform" action="/compare" method="get" id="cmpform">
+  {{ sidecard('a', a, facets.a) }}
+  <button type="button" class="quiet swap" id="swap" title="Swap the two sides" aria-label="Swap the two sides">⇄</button>
+  {{ sidecard('b', b, facets.b) }}
+  <div class="cmpsubmit"><button>Compare</button>
+    {% if a and not b %}<span class="muted small">Tip: pick the same class on side B and a different place or house.</span>{% endif %}</div>
+</form>
+{% for e in err %}<p class="flash err">{{ e }}</p>{% endfor %}
+
+{% if ra and rb %}
+<section class="cmpresult">
+  <div class="sumrow">{{ summary(ra, a) }}<div class="vs">vs</div>{{ summary(rb, b) }}</div>
+
+  <h2>Designs</h2>
+  {% if same %}
+  <p class="note">{% if a.level == 'cluster' %}This cluster{% if ra.n_related %} and its {{ ra.n_related }} related cluster{{ '' if ra.n_related == 1 else 's' }}{% endif %}{% else %}The designs below {{ cls_label(a) }}{% endif %}, as used on each side, each shown by its earliest image on that side.
+    <b>{{ counts.both }}</b> on both sides · <b>{{ counts.only_a }}</b> only on side A · <b>{{ counts.only_b }}</b> only on side B.
+    A design found on one side only is where to look for a copy or a separate block.</p>
+  <table class="aligned">
+    <thead><tr><th>Side A</th><th>Side B</th></tr></thead>
+    <tbody>{% for r in rows %}
+      <tr class="{{ 'both' if r.a and r.b else 'one' }}"><td>{{ cell(r.a, a.src) }}</td><td>{{ cell(r.b, b.src) }}</td></tr>
+    {% endfor %}</tbody>
+  </table>
+  {% else %}
+  <div class="twocol">
+    <div>{% for d in ra.designs %}{{ cell(d, a.src) }}{% else %}<p class="muted">None.</p>{% endfor %}</div>
+    <div>{% for d in rb.designs %}{{ cell(d, b.src) }}{% else %}<p class="muted">None.</p>{% endfor %}</div>
+  </div>
+  {% endif %}
+
+  <h2>Images <small>oldest first</small></h2>
+  <div class="twocol">
+    {% for side, r in ((a, ra), (b, rb)) %}
+    <div>
+      <div class="gallery narrow">{% for o in r.images %}{{ othumb(o, 'book') }}{% else %}<p class="muted">No images.</p>{% endfor %}</div>
+      {% if r.summary.n > r.images|length %}<p><a href="{{ filt_url(side) }}">All {{ "{:,}".format(r.summary.n) }} images on the class page</a></p>{% endif %}
+    </div>
+    {% endfor %}
+  </div>
+</section>
+{% elif not a and not b %}
+<section class="cmpexamples">
+  <h2>Ways to use it</h2>
+  <ul class="note">
+    <li>One class, two places: pick the same class on both sides, then a place on each — what does the Dublin version look like next to the London one?</li>
+    <li>One house against the rest: the same class on both sides, a house on side A, the same house with “every house except this” on side B.</li>
+    <li>Two classes: any two classes or clusters, no filters — who used which?</li>
+  </ul>
+  <p class="note">On a class page, clicking a place in the pie or a publisher or printer opens this page with both sides filled in.</p>
+</section>
+{% endif %}
+{% endblock %}
+{% block scripts %}<script src="/static/compare.js?v=1"></script>{% endblock %}

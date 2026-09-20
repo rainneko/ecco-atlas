@@ -15,7 +15,7 @@ from fastapi.templating import Jinja2Templates
 from itsdangerous import BadSignature, URLSafeTimedSerializer
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from . import config, db, derived, embedding, imaging, lending, places, workbench
+from . import compare, config, db, derived, embedding, imaging, lending, places, workbench
 from . import normalize as N
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
@@ -328,6 +328,31 @@ def composition(rows):
     return out, len(known)
 
 
+def pie_slices(items, total, r=70, cx=80, cy=80, max_slices=8):
+    """SVG path for each slice (server-drawn pie, §12.2). The tail beyond
+    `max_slices` is merged into one "other places" slice."""
+    import math as _m
+    items = list(items)
+    if len(items) > max_slices:
+        rest = items[max_slices - 1:]
+        items = items[:max_slices - 1] + [dict(key=None, place="other places",
+                                               n=sum(i["n"] for i in rest), other=True)]
+    out, a0 = [], -_m.pi / 2
+    for i, it in enumerate(items):
+        frac = it["n"] / max(total, 1)
+        a1 = a0 + frac * 2 * _m.pi
+        if frac >= 0.9999:
+            d = f"M{cx},{cy - r} A{r},{r} 0 1,1 {cx - 0.01},{cy - r} Z"
+        else:
+            x0, y0 = cx + r * _m.cos(a0), cy + r * _m.sin(a0)
+            x1, y1 = cx + r * _m.cos(a1), cy + r * _m.sin(a1)
+            large = 1 if frac > 0.5 else 0
+            d = f"M{cx},{cy} L{x0:.2f},{y0:.2f} A{r},{r} 0 {large},1 {x1:.2f},{y1:.2f} Z"
+        out.append(dict(it, d=d, i=i % 8, frac=frac))
+        a0 = a1
+    return out
+
+
 def place_composition(rows):
     """Coverage by place over the class's books with a known place (§12.2)."""
     seen, per = {}, {}
@@ -344,7 +369,8 @@ def place_composition(rows):
     items = sorted(per.values(), key=lambda v: (-v["n"], v["key"]))
     for v in items:
         v["coverage"] = v["n"] / max(1, len(known))
-    return dict(items=items, n_known=len(known), n_books=len(seen))
+    return dict(items=items, n_known=len(known), n_books=len(seen),
+                slices=pie_slices(items, len(known)) if known else [])
 
 
 @app.get("/class/{a}/{b}", response_class=HTMLResponse)
@@ -356,7 +382,7 @@ def legacy_class(a: str, b: str):
 
 @app.get("/class/{src}/{level}/{value:path}", response_class=HTMLResponse)
 def class_detail(request: Request, src: str, level: str, value: str, order: str = "year",
-                 page_no: int = Query(1, alias="p", ge=1)):
+                 place: str = "", agent: str = "", page_no: int = Query(1, alias="p", ge=1)):
     if src in ("superclass", "subclass", "variant"):      # v1 URL
         return RedirectResponse(class_url("HP-ann", src, f"{level}/{value}"
                                           if src == "variant" else value), status_code=301)
@@ -368,7 +394,16 @@ def class_detail(request: Request, src: str, level: str, value: str, order: str 
         raise HTTPException(404, "class not found")
     limit = 120
     order = order if order in ("year", "group") and level in db.GROUP_COL else "year"
-    members = db.class_members(src, level, value, order, limit, (page_no - 1) * limit)
+    filt = None
+    if place or agent:
+        members, n_filt, n_filt_books = db.class_members_filtered(
+            src, level, value, place or None, agent or None, None, limit, (page_no - 1) * limit)
+        label = compare.describe(compare.Side(src, level, value, place=place, agent=agent))
+        filt = dict(label=label.split(" · ", 1)[1] if " · " in label else label, n=n_filt,
+                    n_books=n_filt_books, clear=class_url(src, level, value) + "#images")
+        order = "year"
+    else:
+        members = db.class_members(src, level, value, order, limit, (page_no - 1) * limit)
     sup = sub = None
     if spec["family"] == "ann":
         if level == "superclass":
@@ -383,14 +418,17 @@ def class_detail(request: Request, src: str, level: str, value: str, order: str 
     comp, n_known = composition(rows)
     place_mix = place_composition(rows)
     pparams = places.Params.from_query(request.query_params)
-    contrast, group, links = None, None, []
+    contrast, group, links, prows = None, None, [], []
     if level in ("superclass", "subclass"):
-        contrast = places.analyse(db.design_place_rows(src, level, value), pparams)
+        prows = db.design_place_rows(src, level, value)
     elif level == "cluster":
         links = db.cluster_links(src, value)
         group = db.cluster_group(src, value)
         if len(group) > 1:
-            contrast = places.analyse(db.cluster_group_place_rows(src, group), pparams)
+            prows = db.cluster_group_place_rows(src, group)
+    n_designs = len({r["design"] for r in prows})
+    if n_designs >= 2:
+        contrast = places.analyse(prows, pparams)          # None when no book has a place
     contrast_ex = {}
     if contrast:
         lv = {"superclass": "subclass", "subclass": "variant", "cluster": "cluster"}[level]
@@ -398,11 +436,27 @@ def class_detail(request: Request, src: str, level: str, value: str, order: str 
             d["level"], d["url_value"] = lv, d["design"]
             d["exemplar"] = db.class_exemplar(src, lv, d["design"])
         contrast_ex = {d["design"]: d for d in contrast["designs"]}
+        for pr in contrast["pairs"]:
+            A, B = contrast_ex[pr["a"]], contrast_ex[pr["b"]]
+            pr["compare"] = compare.url(compare.Side(src, A["level"], A["url_value"]),
+                                        compare.Side(src, B["level"], B["url_value"]))
     params = lending.Params.from_query(request.query_params)
     lend = lending.analyse_rows(rows, params) if row["plate_key"] else None
     ag = db.agents_by_id({e["borrower"] for e in lend.events} | set(lend.owners)) if lend else {}
-    pages = math.ceil(row["n"] / limit)
+    pages = math.ceil((filt["n"] if filt else row["n"]) / limit)
+    curl = class_url(src, level, value)
+    main_key = place_mix["items"][0]["key"] if place_mix["items"] else None
+    main_name = place_mix["items"][0]["place"] if place_mix["items"] else None
+    place_menus = {it["key"]: compare.place_menu(curl, src, level, value, it["key"], it["place"],
+                                                 main_key, main_name)
+                   for it in place_mix["items"]}
+    house_menus = {m["agent_id"]: compare.house_menu(curl, src, level, value, m["name"], m["display"])
+                   for role in ("publisher", "printer") for m in comp[role]}
+    fq = urlencode({k: v for k, v in (("place", place), ("agent", agent)) if v})
     return page(request, "class.html", src=src, level=level, value=value, spec=spec, row=row,
+                filt=filt, place_menus=place_menus, house_menus=house_menus,
+                compare_url=compare.url(compare.Side(src, level, value)),
+                n_designs=n_designs,
                 members=members, order=order, sup=sup, sub=sub, names=names,
                 comp=comp, n_known=n_known, places=place_mix, lend=lend, lend_agents=ag, params=params,
                 contrast=contrast, contrast_ex=contrast_ex, pparams=pparams, group=group, links=links,
@@ -411,7 +465,7 @@ def class_detail(request: Request, src: str, level: str, value: str, order: str 
                 struct=db.class_structure(src, level, value, sup, sub),
                 xref=db.class_crossref(src, level, value),
                 page_no=page_no, pager=pager(page_no, pages),
-                base=class_url(src, level, value) + f"?order={order}",
+                base=class_url(src, level, value) + f"?order={order}" + (f"&{fq}" if fq else ""),
                 title=N.class_label(src, level, value))
 
 
@@ -749,6 +803,47 @@ async def admin_workbench_save(request: Request):
     return {"ok": True, "saved": n}
 
 
+
+
+# ================================================================= compare (§12.7)
+@app.get("/compare", response_class=HTMLResponse)
+def compare_page(request: Request):
+    qp = request.query_params
+    a, b = compare.parse_side(qp, "a"), compare.parse_side(qp, "b")
+    err = []
+    for p, side in (("a", a), ("b", b)):
+        if side is None and (qp.get(p) or qp.get(f"{p}_q")):
+            err.append(f"No class matches “{qp.get(f'{p}_q') or qp.get(p)}”.")
+    ra = compare.build(a) if a else None
+    rb = compare.build(b) if b else None
+    same = bool(a and b and a.key == b.key)
+    rows, counts = compare.align(ra, rb) if (ra and rb and same) else ([], None)
+    facets = {p: db.class_facets(s.src, s.level, s.value) if s else None
+              for p, s in (("a", a), ("b", b))}
+    labels = {p: compare.describe(s) if s else "" for p, s in (("a", a), ("b", b))}
+    return page(request, "compare.html", a=a, b=b, ra=ra, rb=rb, same=same, rows=rows,
+                counts=counts, facets=facets, labels=labels, err=err,
+                cls_label=lambda s: N.class_label(s.src, s.level, s.value) if s else "",
+                filt_url=lambda s: (class_url(s.src, s.level, s.value) + "?" + urlencode(
+                    {k: v for k, v in (("place", s.place), ("agent", s.agent)) if v}) + "#images"))
+
+
+@app.get("/api/classes/suggest")
+def api_classes_suggest(q: str = ""):
+    return [dict(key=f"{r['src']}:{r['level']}:{r['value']}",
+                 label=N.class_label(r["src"], r["level"], r["value"]),
+                 name=N.humanize(r["name"]) if r.get("name") else "",
+                 source=config.SOURCES[r["src"]]["label"], level=r["level"], n=r["n"])
+            for r in db.suggest_classes(q, 15)]
+
+
+@app.get("/api/class/facets")
+def api_class_facets(c: str = ""):
+    k = compare.parse_key(c)
+    if not k:
+        raise HTTPException(404)
+    f = db.class_facets(*k)
+    return {"places": f["places"], "agents": f["agents"]}
 
 
 # ================================================================= reprints (§12.4)

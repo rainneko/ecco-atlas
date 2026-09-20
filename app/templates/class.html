@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import othumb, pagerbar, mix, kdot, help %}
+{% from "_macros.html" import othumb, pagerbar, mix, kdot, help, pie, menulink %}
 {% block title %}{{ title }} · {{ cfg.SITE_TITLE }}{% endblock %}
 {% set sup_name = names.get(('superclass', sup)) %}
 {% set sub_name = names.get(('subclass', sub)) %}
@@ -24,23 +24,24 @@
       <span><b>Years</b>{{ row.y0 or '?' }}–{{ row.y1 or '?' }}</span>
       {% if row.plate_key %}<span><b>Plate</b>yes {{ help('plate') }}</span>{% endif %}
     </div>
-    {% if admin and level in ('superclass', 'subclass', 'cluster') %}<a class="btn quiet" href="/admin/workbench/{{ src }}/{{ level }}/{{ value }}">Open in the workbench</a>{% endif %}
+    <div class="inline">
+      <a class="btn quiet" href="{{ compare_url }}">Compare with…</a>
+      {% if admin and level in ('superclass', 'subclass', 'cluster') %}<a class="btn quiet" href="/admin/workbench/{{ src }}/{{ level }}/{{ value }}">Open in the workbench</a>{% endif %}
+    </div>
   </div>
   <img src="{{ crop_url(row.exemplar, 900) }}" alt="Typical image of {{ title }}">
 </div>
 
 <h2>Who used it {{ help('coverage') }}</h2>
-<p class="note">Bar: each house's share of all imprint credits in this class (adds up to 100%). Percentages: the share of this class's {{ n_known }} books with a known imprint that name the house; a book can name several houses, so these can add up to more than 100%.</p>
+<p class="note">Bar: each house's share of all imprint credits in this class (adds up to 100%). Percentages: the share of this class's {{ n_known }} books with a known imprint that name the house; a book can name several houses, so these can add up to more than 100%. Click a house or a place to compare its images with the rest.</p>
 <div class="panels three">
-  <section class="panel"><h3>Publishers</h3>{{ mix(comp.publisher, owners, borrowers, n_known) }}</section>
-  <section class="panel"><h3>Printers</h3>{{ mix(comp.printer, owners, borrowers, n_known) }}</section>
-  <section class="panel"><h3>Where it was printed {{ help('contrast') }}</h3>
+  <section class="panel"><h3>Publishers</h3>{{ mix(comp.publisher, owners, borrowers, n_known, house_menus) }}</section>
+  <section class="panel"><h3>Printers</h3>{{ mix(comp.printer, owners, borrowers, n_known, house_menus) }}</section>
+  <section class="panel"><h3>Where it was printed {{ help('place_share') }}</h3>
     {% if places.n_known %}
-    <div class="mixbar" role="img" aria-label="share of books by place">{% for p in places['items'] %}<span style="width:{{ (100 * p.n / places.n_known)|round(2) }}%" data-i="{{ loop.index0 % 8 }}" title="{{ p.place }}: {{ p.n }} books"></span>{% endfor %}</div>
-    <ol class="mixlist">{% for p in places['items'][:8] %}
-      <li><i class="sw" data-i="{{ loop.index0 % 8 }}"></i><a href="/books?place={{ p.key|urlencode }}">{{ p.place }}</a><span class="n">{{ pct(p.coverage) }}<small>{{ p.n }} of {{ places.n_known }}</small></span></li>{% endfor %}</ol>
-    {% if places.n_books > places.n_known %}<p class="note">{{ places.n_books - places.n_known }} books without a place.</p>{% endif %}
-    {% else %}<p class="muted small">No place data has been loaded for these books.</p>{% endif %}
+    {{ pie(places.slices, place_menus, places.n_known) }}
+    <p class="note">{{ places.n_known }} of {{ places.n_books }} books have a known place{% if places.n_books > places.n_known %}; {{ places.n_books - places.n_known }} do not{% endif %}. Click a place to compare.</p>
+    {% else %}<p class="muted small">No place of publication is known for these books.</p>{% endif %}
   </section>
 </div>
 
@@ -83,10 +84,10 @@
   </a>{% endfor %}</div>
 {% endif %}
 
-{% if level in ('superclass', 'subclass') or (level == 'cluster' and group and group|length > 1) %}
+{% if n_designs >= 2 %}
 <h2 id="places">Places by design {{ help('contrast') }}</h2>
 {% if not contrast %}
-<p class="note">No place data has been loaded for these books, or this class has no designs below it.</p>
+<p class="note">No place of publication is known for these books.</p>
 {% else %}
 <p class="note">Where the books carrying each {{ 'design' if level == 'superclass' else ('variant' if level == 'subclass' else 'linked cluster') }} were printed. Two blocks of one design printed in different places point to a copy rather than a lent block. Contrast is the total-variation distance between two rows; designs with fewer than {{ pparams.min_books }} placed books are not compared.</p>
 <table class="placetable">
@@ -100,12 +101,14 @@
     <td class="num">{{ d.n_known }}<span class="muted"> / {{ d.n_books }}</span></td>
   </tr>{% endfor %}</tbody>
 </table>
-{% if contrast.pairs %}
+{% if not contrast.pairs %}
+<p class="note">Too few placed books to compare designs ({{ contrast.n_eligible }} design{{ '' if contrast.n_eligible == 1 else 's' }} with at least {{ pparams.min_books }}); lower the minimum below.</p>
+{% else %}
 <h3>Pairs that differ most</h3>
 <div class="pairs">{% for p in contrast.pairs[:8] %}{% set A = contrast_ex[p.a] %}{% set B = contrast_ex[p.b] %}
   <div class="pairrow {{ 'flag' if p.flagged }}">
     <a href="{{ class_url(src, A.level, A.url_value) }}"><img loading="lazy" src="{{ crop_url(A.exemplar) if A.exemplar else '' }}" alt=""><span>{{ class_label(src, A.level, A.url_value) }}<br><i>{{ A.top_name or '?' }}</i></span></a>
-    <div class="pd"><b>{{ '%.2f'|format(p.d) }}</b>{% if p.flagged %}<span class="verdict later">different places — possibly a copy</span>{% else %}<span class="verdict undated">similar mix</span>{% endif %}</div>
+    <div class="pd"><b>{{ '%.2f'|format(p.d) }}</b>{% if p.flagged %}<span class="verdict later">different places — possibly a copy</span>{% else %}<span class="verdict undated">similar mix</span>{% endif %}<a class="small" href="{{ p.compare }}">Compare side by side</a></div>
     <a href="{{ class_url(src, B.level, B.url_value) }}"><img loading="lazy" src="{{ crop_url(B.exemplar) if B.exemplar else '' }}" alt=""><span>{{ class_label(src, B.level, B.url_value) }}<br><i>{{ B.top_name or '?' }}</i></span></a>
   </div>{% endfor %}</div>
 {% endif %}
@@ -141,8 +144,9 @@
   </div>
   {% endif %}
 
-  <h2>All images <small>{{ "{:,}".format(row.n) }}</small></h2>
-  {% if level in ('superclass', 'subclass') %}
+  <h2 id="images">All images <small>{{ "{:,}".format(row.n) }}</small></h2>
+  {% if filt %}<p class="filterchip">Only images {{ filt.label }} — {{ "{:,}".format(filt.n) }} image{{ '' if filt.n == 1 else 's' }} in {{ filt.n_books }} book{{ '' if filt.n_books == 1 else 's' }} <a href="{{ filt.clear }}" aria-label="Show all images" title="Show all images">×</a></p>{% endif %}
+  {% if level in ('superclass', 'subclass') and not filt %}
   <nav class="tabs"><a class="{{ 'on' if order == 'year' }}" href="?order=year">By year</a>
     <a class="{{ 'on' if order == 'group' }}" href="?order=group">By {{ 'subclass' if level == 'superclass' else 'variant' }}</a></nav>
   {% else %}<p class="note">Oldest first: a block's wear appears in date order.</p>{% endif %}

@@ -400,3 +400,85 @@ aside.side .sib{width:100%}
 .minis a img{height:34px;max-width:80px;object-fit:contain;background:#f0eee9;border:1px solid var(--rule);margin:0 4px 4px 0}
 .sib.rej{opacity:.55}
 .sib form{margin-top:4px}
+
+/* ---------------------------------------------------------------- v2.2: place pie (§12.2) */
+.pie{display:flex;gap:14px;align-items:flex-start;flex-wrap:wrap}
+.pie svg{flex:none}
+.pie .mixlist{flex:1;min-width:140px;margin-top:0}
+.pie path{stroke:#fff;stroke-width:1.5}
+.pie a.slice path{cursor:pointer;transition:opacity .12s}
+.pie a.slice:hover path,.pie a.slice:focus path{opacity:.8}
+.p0{fill:var(--m0)}.p1{fill:var(--m1)}.p2{fill:var(--m2)}.p3{fill:var(--m3)}
+.p4{fill:var(--m4)}.p5{fill:var(--m5)}.p6{fill:var(--m6)}.p7{fill:var(--m7)}
+a.menulink{cursor:pointer}
+
+/* click menu (§12.7.4) */
+.clickmenu{position:fixed;z-index:60;background:#fff;border:1px solid var(--rule-2);border-radius:var(--r);
+  box-shadow:0 8px 28px rgba(0,0,0,.18);padding:12px 14px;width:280px;display:flex;flex-direction:column;gap:8px}
+.clickmenu .cm-title{font-family:var(--serif);font-size:16px}
+.clickmenu .cm-primary{text-align:center}
+.clickmenu .cm-secondary{font-size:13.5px}
+.clickmenu .cm-more{font-size:12px;color:var(--muted)}
+
+/* filtered gallery (§12.8) */
+.filterchip{display:inline-flex;align-items:center;gap:10px;background:var(--rubric-soft);color:var(--ink);
+  border-radius:99px;padding:5px 8px 5px 14px;font-size:13.5px;margin:4px 0 8px}
+.filterchip a{display:inline-block;width:22px;height:22px;border-radius:50%;text-align:center;line-height:21px;
+  background:#fff;color:var(--rubric);font-weight:700}
+.filterchip a:hover{text-decoration:none;background:var(--rubric);color:#fff}
+[id]{scroll-margin-top:72px}
+
+/* ---------------------------------------------------------------- compare (§12.7) */
+.cmpform{display:grid;grid-template-columns:1fr 44px 1fr;gap:12px;align-items:start;margin:16px 0}
+.cmpform .side{border:1px solid var(--rule);border-radius:var(--r);background:var(--panel);padding:12px 14px 14px;margin:0;min-width:0}
+.cmpform .side legend{font-family:var(--serif);font-size:15px;padding:0 4px}
+.cmpform label{display:flex;flex-direction:column;gap:3px;font-size:12.5px;color:var(--muted);margin-top:8px}
+.cmpform .filters{display:grid;grid-template-columns:1fr 1fr;gap:0 12px}
+.cmpform .filters label:last-child{grid-column:1/-1}
+.cmpform select,.cmpform input[type=text]{width:100%;color:var(--ink)}
+.cmpform .chk{font-size:12px;margin-top:2px}
+.cmpform .swap{align-self:center;font-size:18px;padding:6px 0}
+.cmpsubmit{grid-column:1/-1;display:flex;gap:14px;align-items:center}
+.picker{position:relative}
+.sugg{position:absolute;top:100%;left:0;right:0;z-index:40;background:#fff;border:1px solid var(--rule-2);
+  border-radius:var(--r);box-shadow:0 8px 24px rgba(0,0,0,.12);max-height:320px;overflow:auto}
+.sugg .opt{padding:7px 10px;font-size:13px;color:var(--ink);cursor:pointer;border-bottom:1px solid var(--rule)}
+.sugg .opt.on,.sugg .opt:hover{background:var(--rubric-soft)}
+.sugg .opt .name{font-family:var(--serif);font-style:italic;color:var(--ink-2)}
+.sumrow{display:grid;grid-template-columns:1fr 40px 1fr;gap:12px;align-items:start;margin-top:10px}
+.sumrow .vs{align-self:center;text-align:center;color:var(--muted);font-family:var(--serif);font-size:18px}
+.sumcol{background:var(--panel);border:1px solid var(--rule);border-radius:var(--r);padding:12px 14px}
+.sidelabel{font-family:var(--serif);font-size:16px;margin:0 0 4px}
+.aligned td{width:50%;vertical-align:middle}
+.aligned tr.one td{background:#fdfbf6}
+.dcell{display:flex;gap:12px;align-items:center;margin:4px 0}
+.dcell img{width:150px;height:64px;object-fit:contain;background:#f0eee9;border:1px solid var(--rule);display:block}
+.dcell.none{color:var(--rule-2);font-size:22px;justify-content:center}
+.twocol{display:grid;grid-template-columns:1fr 1fr;gap:24px;align-items:start}
+.gallery.narrow{grid-template-columns:repeat(auto-fill,minmax(130px,1fr))}
+.cmpexamples ul{padding-left:18px}
+
+/* ---------------------------------------------------------------- About sidebar (§13.2) */
+.aboutpage{display:grid;grid-template-columns:220px minmax(0,1fr);gap:36px;align-items:start}
+.toc{position:sticky;top:76px;max-height:calc(100vh - 96px);overflow:auto;font-size:13.5px;padding-top:22px}
+.toc summary{list-style:none;font-family:var(--serif);font-size:15px;margin-bottom:6px;cursor:default}
+.toc summary::-webkit-details-marker{display:none}
+.toc ul{list-style:none;padding:0;margin:0}
+.toc ul ul{padding-left:12px;margin:2px 0 6px;border-left:1px solid var(--rule)}
+.toc a{display:block;padding:3px 8px;color:var(--ink-2);border-radius:3px}
+.toc ul ul a{font-size:12.5px;padding:2px 8px}
+.toc a:hover{text-decoration:none;background:var(--rubric-soft)}
+.toc a.on{color:var(--rubric);font-weight:600;background:var(--rubric-soft)}
+.glossary dt:target,.glossary h3:target{animation:target-flash 2.4s ease-out}
+@keyframes target-flash{0%,30%{background:var(--warn-soft)}100%{background:transparent}}
+
+@media (max-width:980px){
+  .cmpform,.sumrow,.twocol{grid-template-columns:1fr}
+  .cmpform .swap{justify-self:center;transform:rotate(90deg)}
+  .sumrow .vs{display:none}
+  .aboutpage{grid-template-columns:1fr;gap:0}
+  .toc{position:static;max-height:none;padding-top:12px}
+  .toc summary{cursor:pointer;border:1px solid var(--rule);border-radius:var(--r);padding:8px 12px;background:var(--panel)}
+  .toc summary::after{content:" ▾";color:var(--muted)}
+  .toc details[open] summary::after{content:" ▴"}
+}

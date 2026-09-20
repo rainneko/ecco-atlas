@@ -55,6 +55,66 @@
     else done(false);
   });
 
+  // Click menu for places and houses on class pages (DESIGN §12.7.4).
+  // The link itself is the primary action, so it works without JavaScript.
+  let menu = null;
+  const closeMenu = () => { if (menu) { menu.remove(); menu = null; } };
+  document.addEventListener('click', e => {
+    const a = e.target.closest('a.menulink');
+    if (!a) { if (menu && !e.target.closest('.clickmenu')) closeMenu(); return; }
+    if (e.metaKey || e.ctrlKey || e.shiftKey) return;           // open-in-new-tab stays a plain link
+    e.preventDefault(); closeMenu();
+    const esc = s => String(s || '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    menu = document.createElement('div');
+    menu.className = 'clickmenu'; menu.setAttribute('role', 'dialog'); menu.setAttribute('aria-label', a.dataset.title);
+    menu.innerHTML = '<div class="cm-title">' + esc(a.dataset.title) + '</div>' +
+      '<a class="btn cm-primary" href="' + esc(a.getAttribute('href')) + '">' + esc(a.dataset.primary) + '</a>' +
+      '<a class="cm-secondary" href="' + esc(a.dataset.secondaryHref) + '">' + esc(a.dataset.secondary) + '</a>' +
+      '<a class="cm-more" href="' + esc(a.dataset.moreHref) + '">' + esc(a.dataset.more) + '</a>';
+    document.body.appendChild(menu);
+    const r = a.getBoundingClientRect(), w = menu.offsetWidth, h = menu.offsetHeight;
+    let x = (e.clientX || r.left) + 8, y = (e.clientY || r.bottom) + 8;
+    if (x + w > innerWidth - 8) x = innerWidth - w - 8;
+    if (y + h > innerHeight - 8) y = Math.max(8, (e.clientY || r.top) - h - 8);
+    menu.style.left = x + 'px'; menu.style.top = y + 'px';
+    menu.querySelector('.cm-primary').focus();
+  });
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') closeMenu(); });
+  addEventListener('scroll', closeMenu, { passive: true });
+
+  // About page: highlight the section the reader is in (DESIGN §13.2): the
+  // last heading that has scrolled past the top, so arriving at a term from a
+  // `?` marks the section that contains it, not the next heading on screen.
+  const toc = document.querySelector('.toc');
+  if (toc) {
+    const det = toc.querySelector('details');
+    if (det && matchMedia('(max-width: 980px)').matches) det.open = false;   // collapsed on phones
+    toc.addEventListener('click', e => { if (e.target.closest('a') && det && matchMedia('(max-width: 980px)').matches) det.open = false; });
+    const links = [...toc.querySelectorAll('a[href^="#"]')];
+    const targets = links.map(l => document.getElementById(l.getAttribute('href').slice(1)));
+    let ticking = false;
+    const mark = () => {
+      ticking = false;
+      let cur = -1;
+      targets.forEach((t, i) => { if (t && t.getBoundingClientRect().top <= 110) cur = i; });
+      // at the end of the page the last sections can never reach the top:
+      // prefer the section named in the address, else the last one on screen
+      if (innerHeight + scrollY >= document.documentElement.scrollHeight - 4) {
+        const h = location.hash.slice(1), hi = targets.findIndex(t => t && t.id === h);
+        if (hi >= 0 && targets[hi].getBoundingClientRect().top < innerHeight) cur = hi;
+        else targets.forEach((t, i) => { if (t && t.getBoundingClientRect().top < innerHeight * 0.8) cur = i; });
+      }
+      links.forEach(l => l.classList.remove('on'));
+      if (cur < 0) return;
+      links[cur].classList.add('on');
+      const sub = links[cur].closest('ul ul');
+      if (sub) sub.previousElementSibling.classList.add('on');      // its parent section too
+    };
+    addEventListener('scroll', () => { if (!ticking) { ticking = true; requestAnimationFrame(mark); } }, { passive: true });
+    addEventListener('hashchange', () => setTimeout(mark, 50));
+    mark(); setTimeout(mark, 300);
+  }
+
   // live read-outs next to range sliders
   document.querySelectorAll('.range input[type=range]').forEach(inp => {
     const out = inp.parentElement.querySelector('output');

@@ -1028,3 +1028,138 @@ def book_pairs_for(book_id, limit=10):
                 WHERE p.a = %(b)s OR p.b = %(b)s
                 ORDER BY p.diff_place DESC, p.shared DESC LIMIT %(lim)s""",
              {"b": book_id, "lim": limit})
+
+
+# ================================================================= compare and filters (§12.7, §12.8)
+def agent_id_of(name):
+    r = q("SELECT agent_id FROM agent WHERE name = %s", (name,), one=True)
+    return r["agent_id"] if r else None
+
+
+def filter_sql(place=None, agent=None, role=None, p=None):
+    """SQL fragment (alias o = ornament, b = book) for a place / house filter.
+    `-x` means "every other known place" / "books with a known imprint not
+    naming x". Returns (sql, params); sql starts with ' AND ' or is ''."""
+    p = dict(p or {})
+    parts = []
+    if place:
+        neg = place.startswith("-")
+        p["f_place"] = place.lstrip("-")
+        parts.append("b.place_key IS NOT NULL AND b.place_key <> %(f_place)s" if neg
+                     else "b.place_key = %(f_place)s")
+    if agent:
+        neg = agent.startswith("-")
+        aid = agent_id_of(agent.lstrip("-"))
+        p["f_aid"] = aid if aid is not None else -1
+        rsql = ""
+        if role in ("publisher", "printer"):
+            p["f_role"] = role
+            rsql = " AND x.role = %(f_role)s"
+        ex = (f"EXISTS (SELECT 1 FROM book_agent x WHERE x.book_id = o.book_id "
+              f"AND x.agent_id = %(f_aid)s{rsql})")
+        parts.append(f"b.has_imprint AND NOT {ex}" if neg else ex)
+    return ("".join(" AND " + x for x in parts), p)
+
+
+def class_members_filtered(src, level, value, place=None, agent=None, role=None,
+                           limit=120, offset=0):
+    f, p = filter_sql(place, agent, role, {"src": src, "v": value, "lim": limit, "off": offset})
+    rows = q(f"""
+        SELECT o.oid, o.kind, o.page, o.book_id, o.label, o.ann_src, o.superclass,
+               o.subclass, o.variant, o.class_path, o.pred_src, o.hc_cluster,
+               b.full_title, b.year, b.is_tonson, NULL AS grp, count(*) OVER () AS total
+        FROM ornament o JOIN book b USING (book_id)
+        WHERE {class_cond(src, level)}{f}
+        ORDER BY b.year NULLS LAST, o.book_id, o.page LIMIT %(lim)s OFFSET %(off)s""", p)
+    total = rows[0]["total"] if rows else 0
+    if not rows and offset:
+        total = q(f"""SELECT count(*) AS n FROM ornament o JOIN book b USING (book_id)
+                      WHERE {class_cond(src, level)}{f}""", p, one=True)["n"]
+    fb = q(f"""SELECT count(DISTINCT o.book_id) AS n FROM ornament o JOIN book b USING (book_id)
+               WHERE {class_cond(src, level)}{f}""", p, one=True)["n"]
+    return rows, total, fb
+
+
+def class_facets(src, level, value):
+    """Places and houses that occur in a class, with book counts (compare form)."""
+    p = {"src": src, "v": value}
+    places = q(f"""SELECT b.place_key AS key, min(b.place) AS name, count(DISTINCT o.book_id) AS n
+                   FROM ornament o JOIN book b USING (book_id)
+                   WHERE {class_cond(src, level)} AND b.place_key IS NOT NULL
+                   GROUP BY b.place_key ORDER BY n DESC, key LIMIT 40""", p)
+    agents = q(f"""SELECT a.name, a.display_name AS display, count(DISTINCT o.book_id) AS n,
+                          string_agg(DISTINCT ba.role, ',') AS roles
+                   FROM ornament o JOIN book_agent ba USING (book_id) JOIN agent a USING (agent_id)
+                   WHERE {class_cond(src, level)}
+                   GROUP BY a.name, a.display_name ORDER BY n DESC, a.name LIMIT 40""", p)
+    return {"places": places, "agents": agents}
+
+
+def suggest_classes(term, limit=15):
+    """Class picker: 'C014', 'C014_02', 'mermaid', 'HP-8944' or '8944'."""
+    import re as _re
+    t = (term or "").strip()
+    if not t:
+        return []
+    out = []
+    m = _re.fullmatch(r"(?i)(DI|FT|HP|TP)?[- ]?(\d+)", t)
+    if m:
+        kinds = [m.group(1).upper()] if m.group(1) else list(config.KINDS)
+        srcs = [f"{k}-pred" for k in kinds if f"{k}-pred" in config.SOURCES]
+        out += q("""SELECT src, level, value, n, n_books, NULL AS name FROM mv_class
+                    WHERE level = 'cluster' AND src = ANY(%s) AND value = %s
+                    ORDER BY n DESC LIMIT %s""", (srcs, m.group(2), limit))
+    like = t.lower() + "%"
+    out += q("""SELECT c.src, c.level, c.value, c.n, c.n_books, coalesce(cn.name, cs.name) AS name
+                FROM mv_class c
+                LEFT JOIN class_name cn ON cn.src = c.src AND cn.level = c.level AND cn.value = c.value
+                LEFT JOIN class_name cs ON cs.src = c.src AND cs.level = 'superclass'
+                     AND cs.value = split_part(split_part(c.value, '/', 1), '_', 1)
+                WHERE c.level <> 'cluster' AND (lower(c.value) LIKE %(l)s
+                      OR lower(replace(c.value, '/', '')) LIKE %(l)s
+                      OR lower(cn.name) LIKE %(w)s)
+                ORDER BY (lower(c.value) LIKE %(l)s) DESC,
+                         CASE c.level WHEN 'superclass' THEN 0 WHEN 'subclass' THEN 1 ELSE 2 END,
+                         c.value LIMIT %(lim)s""",
+             {"l": like, "w": f"%{t.lower()}%", "lim": limit})
+    seen, res = set(), []
+    for r in out:
+        k = (r["src"], r["level"], r["value"])
+        if k not in seen:
+            seen.add(k)
+            res.append(r)
+    return res[:limit]
+
+
+def side_rows(src, level, value, values, place, agent, role, design_sql, dlevel_sql):
+    """Designs, summary and gallery of one comparison side."""
+    if level == "cluster":
+        cond, p = ("o.pred_src = %(src)s AND o.hc_cluster = ANY(%(vals)s) "
+                   "AND NOT o.cluster_rejected"), {"src": src, "vals": list(values)}
+    else:
+        cond, p = class_cond(src, level), {"src": src, "v": value}
+    f, p = filter_sql(place, agent, role, p)
+    designs = q(f"""
+        SELECT {design_sql} AS design, {dlevel_sql} AS dlevel, count(*) AS n,
+               count(DISTINCT o.book_id) AS n_books, min(b.year) AS y0, max(b.year) AS y1,
+               (array_agg(o.oid ORDER BY b.year NULLS LAST, o.oid))[1] AS exemplar
+        FROM ornament o JOIN book b USING (book_id) WHERE {cond}{f} GROUP BY 1, 2""", p)
+    summ = q(f"""SELECT count(*) AS n, count(DISTINCT o.book_id) AS n_books,
+                        min(b.year) AS y0, max(b.year) AS y1
+                 FROM ornament o JOIN book b USING (book_id) WHERE {cond}{f}""", p, one=True)
+    top_place = q(f"""SELECT min(b.place) AS name, count(DISTINCT o.book_id) AS n
+                      FROM ornament o JOIN book b USING (book_id)
+                      WHERE {cond}{f} AND b.place_key IS NOT NULL
+                      GROUP BY b.place_key ORDER BY n DESC LIMIT 3""", p)
+    top_house = q(f"""SELECT a.name, a.display_name AS display, count(DISTINCT o.book_id) AS n
+                      FROM ornament o JOIN book b USING (book_id)
+                      JOIN book_agent ba ON ba.book_id = o.book_id JOIN agent a USING (agent_id)
+                      WHERE {cond}{f} GROUP BY a.name, a.display_name
+                      ORDER BY n DESC LIMIT 3""", p)
+    images = q(f"""SELECT o.oid, o.kind, o.label, o.book_id, o.page, o.ann_src, o.superclass,
+                          o.subclass, o.variant, o.class_path, o.pred_src, o.hc_cluster,
+                          b.full_title, b.year, b.is_tonson
+                   FROM ornament o JOIN book b USING (book_id) WHERE {cond}{f}
+                   ORDER BY b.year NULLS LAST, o.book_id, o.page LIMIT 24""", p)
+    return dict(designs=designs, summary=summ, top_place=top_place, top_house=top_house,
+                images=images)

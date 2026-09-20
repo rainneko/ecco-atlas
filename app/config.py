@@ -98,40 +98,49 @@ SCOPE_SENTENCE = os.environ.get("SCOPE_SENTENCE") or (
 
 # Tooltip glossary (DESIGN §13.2): key -> (short text for the hover card, /about anchor)
 GLOSSARY = {
-    "DI": ("Decorative initial: a large decorated letter marking a new section of text.", "initials"),
-    "FT": ("Factotum: a simple decorative initial with a blank centre into which any "
-           "letter can be set.", "initials"),
-    "HP": ("Headpiece: an ornamental design at the head of a chapter or section. Unlike an "
-           "illustration it does not depict anything in the text.", "ornaments"),
-    "TP": ("Tailpiece or printer's device: a tailpiece closes a chapter; a device — a crest "
-           "or emblem identifying the printer — usually sits on the title page.", "ornaments"),
-    "plate": ("The level we treat as one physical block: a human variant such as C067_01a, "
-              "or one machine cluster.", "plates"),
-    "cluster": ("Images the model judged to come from the same design. Machine output, "
-                "not checked by a person.", "classes"),
-    "superclass": ("Designs that share a motif, e.g. C067. A superclass can hold several "
-                   "physical blocks.", "classes"),
+    # key -> (the hover text: what you are looking at, in plain words; anchor on /about)
+    "DI": ("Decorative initial: a large decorated letter that opens a section of text.", "term-DI"),
+    "FT": ("Factotum: a decorative frame with a blank centre, into which any letter could "
+           "be set.", "term-FT"),
+    "HP": ("Headpiece: an ornament at the head of a chapter or section. It decorates; it "
+           "does not illustrate the text.", "term-HP"),
+    "TP": ("Tailpieces and printers' devices, counted as one type here. A tailpiece closes "
+           "a chapter; a device is the printer's emblem, usually on the title page.",
+           "term-TP"),
+    "plate": ("One physical woodblock, as far as we can tell: a human variant such as "
+              "C067_01a, or one machine cluster. Ownership and lending are worked out per "
+              "plate.", "term-plate"),
+    "cluster": ("A group of images the model judged to come from the same design. Machine "
+                "output, not checked by a person.", "term-cluster"),
+    "superclass": ("Designs that share a motif, e.g. C067. One superclass usually holds "
+                   "several blocks.", "term-superclass"),
     "subclass": ("One design, e.g. C067_01. Its variants (a, b, …) are separate blocks of "
-                 "that design.", "classes"),
-    "coverage": ("Share of the plate's books, among those with a known imprint, that name "
-                 "this house. A book can name several houses.", "shares"),
-    "credit": ("This house's share of all imprint credits in the class; the bar adds up "
-               "to 100%.", "shares"),
-    "owner": ("A house named in at least the owner share (default 70%) of a plate's "
-              "books.", "lending"),
+                 "that design.", "term-subclass"),
+    "coverage": ("Percentages: of this class's books with a known imprint, how many name "
+                 "the house. A book can name several houses, so they can add up to more "
+                 "than 100%.", "term-coverage"),
+    "credit": ("The bar: each house's share of all names on the imprints; it adds up to "
+               "100%.", "term-credit"),
+    "owner": ("The house named in most of a plate's books (by default at least 70%).",
+              "term-owner"),
     "borrower": ("A house named in only a few of a plate's books, and never together with "
-                 "the owner — the block may have been lent.", "lending"),
-    "imprint": ("The publisher and printer statement of the title page as transcribed in "
-                "ESTC. Names are reduced to surnames, so 'Tonson, J.' and 'J. and R. "
-                "Tonson' are one house.", "imprint"),
-    "strip": ("Each dot is a page carrying an ornament of that type; hover to preview, "
-              "click to open.", "strip"),
+                 "the owner — the block may have been lent to it.", "term-borrower"),
+    "imprint": ("Who published and printed the book, as the title page says (from ESTC). "
+                "Names are reduced to surnames, so 'Tonson, J.' and 'J. and R. Tonson' are "
+                "one house.", "term-imprint"),
+    "strip": ("Each dot is a page with an ornament of that type; hover to preview, click to "
+              "open.", "term-strip"),
     "T": ("Tonson or Watts hold the largest share of this plate (or, on a book, the "
-          "imprint names them).", "tonson"),
-    "contrast": ("Total-variation distance between two place profiles: 0 means the same "
-                 "mix of places, 1 means no place in common.", "places"),
-    "similarity": ("Cosine similarity of image embeddings, 1 = identical. A similar design "
-                   "is not proof of the same block.", "search"),
+          "imprint names them).", "term-T"),
+    "place_share": ("Where this class's books were printed. A book has one place, so the "
+                    "slices add up to 100%. Click a place to compare its images with the "
+                    "others.", "term-place_share"),
+    "contrast": ("How differently two designs are spread over cities: 0 = the same cities in "
+                 "the same proportions, 1 = no city in common. A high value suggests two "
+                 "separate blocks, such as a London original and a Dublin copy.",
+                 "term-contrast"),
+    "similarity": ("How alike two images look to the model, from 0 to 1. A similar design is "
+                   "not proof of the same block.", "term-similarity"),
 }
 
 PUBLICATIONS = [

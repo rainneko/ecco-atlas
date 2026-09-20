@@ -44,6 +44,7 @@ loader upserts on image id + box and re-applies every admin correction.
 
 ```bash
 python -m tests.test_normalize          # parsing rules
+python -m tests.test_glossary           # every ? lands on its /about entry
 ./smoke.sh http://localhost:8000        # every route; admin flows too if ADMIN_PASSWORD is set
 ```
 

@@ -18,6 +18,8 @@ book-search cost (§4.7), and small layout changes (§5.2).
 | Places of publication | `book.place` from an ESTC export loaded with `--places`; place composition on class pages; subclass-versus-subclass place contrast; book-pair reprint list; cluster links from embeddings (§12). Every place feature degrades to "no place data" when the file was never loaded. |
 | Front page too modest; glossary; publications; people | §13. |
 | v2.1.1 (2026-09-20): header, `?` icon, About text, book-pair titles, file upload | §8 header, §9.4 status, §10 upload steps, §12.4, §13.2. |
+| v2.2 (2026-09-20): place pie; "what does Dublin's version look like?"; compare two sets of ornaments | §12.2 pie and click menu, §12.3 empty cases, §12.7 `/compare`, §12.8 filtered class view. |
+| v2.2: About page hard to navigate; `?` texts unclear | §13.2 sidebar, one anchor per glossary term, rewritten texts. |
 | Imprint names clickable; sortable book list | §5.2. |
 
 ### 0.2 v1 → v2.0
@@ -701,6 +703,10 @@ GET  /lending?owner=&lo=&hi=&min_books=&gap=&src=&agent=&plate=
 GET  /lending.csv?…                           same, as CSV
 GET  /reprints?p=  /reprints.csv               book pairs sharing plates (§12.4)
 GET  /about                                   glossary, method, publications, people (§13)
+GET  /compare?a=&a_place=&a_agent=&a_role=&b=…  compare two sets of ornaments (§12.7)
+GET  /api/classes/suggest?q=                   class picker suggestions
+GET  /api/class/facets?c=SRC:LEVEL:VALUE       places and houses occurring in a class
+GET  /class/…?place=&agent=                    class page with a filtered gallery (§12.8)
 
 GET  /search/image                            upload form (§9)
 POST /api/image-search                        multipart upload → {token}
@@ -1112,8 +1118,14 @@ overwrites a place already loaded; `--replace-places` does.
 - Book list, book page, ornament page (Book section): "Place: Dublin".
 - `/books`: a place filter (the 12 most frequent places).
 - Class page: a third panel next to Publishers and Printers, **"Where it was
-  printed"**, coverage per place over the class's books with a known place,
-  same bar style (§4.1); each place links to the book list filtered by it.
+  printed"**, drawn as a **pie**. Houses stay bars — a book names several
+  houses, so their shares overlap and do not add up to a whole — but a book has
+  exactly one place, so place shares partition the books and a pie is the
+  honest picture. Pie (SVG, server-drawn, ≤ 8 slices, the rest as "other") and
+  a legend with percentages and counts; "N books without a place" underneath.
+  Its `?` explains the pie, not the contrast measure (v2.1 showed the wrong
+  entry). Clicking a slice or a legend entry opens the **click menu**
+  (§12.7.4); without JavaScript the link goes straight to the comparison.
 
 ### 12.3 Places by design — spotting copies
 
@@ -1133,7 +1145,19 @@ case of the paper: London birds facing out, Dublin birds facing in). Both
 numbers are query parameters (`?place_min=5&place_d=0.6`) with defaults in
 `config.PLACE_DEFAULTS`. This is the ornament-side counterpart of lending
 (§4.5): lending asks *who* used one block; this asks *where* two blocks of one
-design were used.
+design were used. Each flagged pair has a **Compare side by side** link
+(§12.7) with the two designs preset.
+
+The section is shown only when it can say something, and says precisely why
+not otherwise (v2.1 used one sentence for two different cases):
+- the class has fewer than two designs below it (a DI superclass; an HP
+  subclass without variants; a cluster with no related clusters) → the section
+  is **not shown**;
+- designs exist but no book has a place → "No place of publication is known
+  for these books.";
+- places exist but fewer than two designs reach the minimum → the table is
+  shown, the pair list says "Too few placed books to compare designs; lower
+  the minimum."
 
 ### 12.4 Book pairs — reprints and suspicious editions
 
@@ -1189,6 +1213,74 @@ and a *different place* tag on book pages; `etl.link_clusters`, "Related
 clusters" with admin *Not the same* / *Restore*; counts on the admin page.
 Every part shows a "no place data" sentence when `--places` has not run.
 
+### 12.7 Compare two sets of ornaments (`/compare`, v2.2)
+
+The questions behind it: *what does the Dublin version of this design look
+like?* (same class, two places); *which blocks did Tonson use that nobody else
+did?* (same class, one house against the rest); *are C002 and C011 used by
+the same houses?* (two classes). One page answers all three.
+
+**12.7.1 A side** is a set of ornaments defined by
+
+| part | values | URL (side a; side b is `b…`) |
+|---|---|---|
+| class | any class or cluster: `SRC:LEVEL:VALUE` | `a=HP-ann:superclass:C002` |
+| place | a place key, `-key` for "every other known place", or empty | `a_place=dublin`, `a_place=-london` |
+| house | an agent name, `-name` for "books with a known imprint not naming it", or empty | `a_agent=tonson` |
+| role | `publisher`, `printer` or empty (either) | `a_role=printer` |
+
+**12.7.2 Layout.** Top: two side-by-side **side cards**, each with a class
+picker (type `C002`, `mermaid`, `HP-8944` or `8944`; suggestions come from
+`/api/classes/suggest`), and three filters whose options are the places and
+houses that actually occur in that class (`/api/class/facets`), each option
+with its book count. A **⇄ swap** button between the cards, **Compare** below.
+Changing a class resets its filters. Under the cards, the results:
+
+1. **Summary strip**, one column per side: images, books, years, top place,
+   top house — the numbers that make the difference visible at a glance.
+2. **Designs.** When both sides are the same class (the usual case: one class,
+   two places or two houses), one aligned table: one row per design below the
+   class (subclasses of a superclass, variants of a subclass, related clusters
+   of a cluster — §12.6; just the class itself when there is nothing below),
+   left cell = the design as used on side A (its earliest image in A, images,
+   books, years), right cell = the same for B, "—" where a design does not
+   occur. Rows sorted: designs on both sides, then only-A, then only-B; a line
+   above the table counts them ("3 designs on both sides · 1 only in London ·
+   2 only in Dublin"). This is the "left: London's subclasses with a picture,
+   right: Dublin's" view. When the sides are different classes, the two design
+   lists stand side by side without alignment.
+3. **Images**, two columns, oldest first, 24 per side, each with a link to the
+   full filtered list on the class page (§12.8).
+
+For a cluster without embeddings or links the design table has the one
+cluster; nothing on the page depends on embeddings being loaded.
+
+**12.7.3 Entry points.** Header link **Compare** (empty form); **Compare
+with…** button on every class page (side A preset to the class); a
+**Compare side by side** link on every flagged design pair (§12.3); and the
+click menu below.
+
+**12.7.4 The click menu.** Clicking a place (pie slice or legend) or a house
+(publisher/printer list) on a class page opens a small menu anchored to the
+click, instead of leaving the page at once. Order = expected intent:
+
+| clicked | primary (button) | secondary | small text |
+|---|---|---|---|
+| a place P, main place M, P ≠ M | **Compare P with M** — both sides this class, places preset | Only the P images of this class (§12.8) | Learn more about P → `/books?place=P` |
+| the main place M | **Compare M with everywhere else** (`-M`) | Only the M images | Learn more about M |
+| a house H | **Compare H with the other houses** (`-H`) | Only H's images of this class | Learn more about H → `/agent/H` |
+
+The menu closes on Escape or an outside click and is keyboard reachable; the
+underlying link is the primary action, so it works without JavaScript.
+
+### 12.8 Filtered class view
+
+`/class/…?place=dublin`, `?agent=tonson` (and the `-` forms) filter the
+**All images** gallery of a class page; a chip above it says "Only images
+printed in Dublin — 1 of 70 placed books ×", the × removes the filter. The
+panels above (houses, places, lending) always describe the whole class, so
+the filtered images can be read against them.
+
 ---
 
 ## 13. Front page scope, glossary, publications, people (v2.1)
@@ -1219,6 +1311,29 @@ share", "credit share", "owner", "borrower", "cluster", "superclass",
 to the full entry on `/about`. Implemented as a `help(term)` macro reading
 `config.GLOSSARY`; no JavaScript needed (CSS `:hover`/`:focus-within`), so it
 works on the sortable tables and inside panels.
+
+**`?` texts** are one or two plain sentences saying what the reader sees and
+how to read it; the method goes on `/about`. Each glossary term links to its
+**own** entry on `/about` (one anchor per term: `#term-coverage`,
+`#term-contrast`, …), so "more" lands on the definition itself, not on the top
+of a section. A test (`tests/test_glossary.py`) checks that every term in
+`config.GLOSSARY` has its anchor on `/about`.
+
+**About layout (v2.2).** Two columns: a sticky **sidebar** (220 px) with a
+two-level table of contents — the sections (The assumption; What is in the
+atlas; What the data has shown; How the data was made; Publications; People)
+and, under "What is in the atlas", its subsections (Printers' ornaments,
+Initials, Not in the atlas, Classes and clusters, Shares, Ownership and
+lending, Imprints, Places, Similarity, Page strip). The item for the section the
+reader is *in* is highlighted as they scroll — the last heading that has
+passed the top of the window, not the first heading visible (which would mark
+the next section while the reader is still in the previous one); at the end of
+the page, where the last sections cannot reach the top, the section named in
+the address wins. Arriving from a `?` (`/about#term-…`)
+scrolls the entry clear of the sticky header, highlights it briefly, and the
+sidebar shows where it sits — the same place a reader would reach by clicking
+the sidebar, so both paths agree. Below 980 px the sidebar becomes a
+collapsible "Contents" list above the text.
 
 `/about` carries the full definitions supplied by the annotation guideline —
 printers' ornaments (device PD, headpiece HP, tailpiece TP; "border" and

@@ -2,7 +2,7 @@
 {% from "_macros.html" import pagerbar, kdot, help %}
 {% block title %}Reprints and copies · {{ cfg.SITE_TITLE }}{% endblock %}
 {% block body %}
-<h1>Books that share plates {{ help('plate') }}</h1>
+<h1>Books that share plates</h1>
 <p class="lead">Pairs of books that share at least {{ cfg.PAIR_MIN_SHARED }} plates, counting only plates found in {{ cfg.PAIR_MAX_PLATE_BOOKS }} books or fewer. Two books printed in different places that share several blocks are candidates for a reprint, a transferred stock, or a copied design — the <i>New System of Agriculture</i> case (London 1726, Dublin 1727).</p>
 <nav class="tabs"><a class="{{ 'on' if not all }}" href="/reprints">Different places ({{ stats.n_diff }})</a><a class="{{ 'on' if all }}" href="/reprints?all=1">All pairs ({{ stats.n }})</a></nav>
 <p class="note">{{ stats.n }} pairs, {{ stats.n_placed }} with a place known for both books. <a href="/reprints.csv?all={{ all }}">Download as CSV</a>.</p>

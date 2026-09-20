@@ -1,6 +1,32 @@
 {% extends "base.html" %}
 {% block title %}About · {{ cfg.SITE_TITLE }}{% endblock %}
 {% block body %}
+<div class="aboutpage">
+<nav class="toc" aria-label="Contents">
+  <details open><summary>Contents</summary>
+  <ul>
+    <li><a href="#assumption">The assumption</a></li>
+    <li><a href="#glossary">What is in the atlas</a>
+      <ul>
+        <li><a href="#ornaments">Printers' ornaments</a></li>
+        <li><a href="#initials">Initials</a></li>
+        <li><a href="#illustrations">Not in the atlas</a></li>
+        <li><a href="#classes">Classes and clusters</a></li>
+        <li><a href="#shares">Shares</a></li>
+        <li><a href="#lending">Ownership and lending</a></li>
+        <li><a href="#imprint">Imprints and houses</a></li>
+        <li><a href="#places">Places</a></li>
+        <li><a href="#search">Similarity</a></li>
+        <li><a href="#strip">The page strip</a></li>
+      </ul></li>
+    <li><a href="#method">How the data was made</a></li>
+    <li><a href="#findings">What the data has shown</a></li>
+    <li><a href="#publications">Publications</a></li>
+    <li><a href="#people">People</a></li>
+  </ul>
+  </details>
+</nav>
+<div class="aboutmain">
 <h1>About the atlas</h1>
 <p class="lead">{{ cfg.SCOPE_SENTENCE }} The atlas is the working instrument of a research project on how ornaments moved between the printing and publishing houses of the eighteenth century. It holds {{ "{:,}".format(summary.n_ornaments or 0) }} ornaments in {{ "{:,}".format(summary.n_books or 0) }} books, printed {{ summary.year_min or '?' }}–{{ summary.year_max or '?' }}.</p>
 
@@ -11,14 +37,14 @@
 <div class="glossary">
 <h3 id="ornaments">Printers' ornaments</h3>
 <dl>
-  <dt>Printer's device (PD)</dt><dd>A design, sometimes a crest or emblem, identifying the printer. Usually found on the title page. In this atlas tailpieces and printers' devices form one type, <b>TP</b>.</dd>
-  <dt>Headpiece (HP)</dt><dd>An ornamental design usually found at the beginning of a chapter or section of text. Different from an illustration: it usually does not illustrate something happening in the text.</dd>
-  <dt>Tailpiece (TP)</dt><dd>An ornamental design found at the end of a chapter or piece of text.</dd>
+  <dt id="term-PD">Printer's device (PD)</dt><dd>A design, sometimes a crest or emblem, identifying the printer. Usually found on the title page. In this atlas tailpieces and printers' devices form one type, <b>TP</b>.</dd>
+  <dt id="term-HP">Headpiece (HP)</dt><dd>An ornamental design usually found at the beginning of a chapter or section of text. Different from an illustration: it usually does not illustrate something happening in the text.</dd>
+  <dt id="term-TP">Tailpiece (TP)</dt><dd>An ornamental design found at the end of a chapter or piece of text.</dd>
 </dl>
 <h3 id="initials">Initials</h3>
 <dl>
-  <dt>Decorative initial (DI)</dt><dd>A large decorated letter, marking off a new section of text.</dd>
-  <dt>Factotum (FT)</dt><dd>A simple decorative initial where any letter can be inserted into a blank space in the middle.</dd>
+  <dt id="term-DI">Decorative initial (DI)</dt><dd>A large decorated letter, marking off a new section of text.</dd>
+  <dt id="term-FT">Factotum (FT)</dt><dd>A simple decorative initial where any letter can be inserted into a blank space in the middle.</dd>
 </dl>
 <h3 id="illustrations">Not in the atlas: illustrations and stamps</h3>
 <dl>
@@ -27,40 +53,40 @@
   <dt>Other illustration</dt><dd>Illustrations that are not clearly a woodcut or engraving: mathematical diagrams, music, maps.</dd>
   <dt>Library stamp</dt><dd>A modern stamp from a library.</dd>
 </dl>
-
 <h3 id="classes">Classes, plates and clusters</h3>
 <dl>
-  <dt>Superclass, subclass, variant</dt><dd>Human annotation has three levels. A <b>superclass</b> (C067) groups designs that share a motif; a <b>subclass</b> (C067_01) is one design; a <b>variant</b> (C067_01a) is what we take to be one physical block of it. The codes follow the paper: CXXX is the main class, _XX the subclass. Decorative initials and factotums are annotated at superclass level only.</dd>
-  <dt id="plates">Plate</dt><dd>The level treated as one block in every analysis of who used what: a human variant, or one machine cluster. A superclass is never a plate, because it holds several blocks.</dd>
-  <dt>Cluster</dt><dd>A group of images the model judged to come from the same design (HP-8944). Clusters are machine output and have not been checked by a person; an image with a human label is never counted under its cluster as well, so nothing is counted twice.</dd>
+  <dt id="term-superclass">Superclass</dt><dd>Designs that share a motif, e.g. C067. The codes follow the paper: CXXX is the main class. A superclass usually holds several blocks, so it is never treated as one.</dd>
+  <dt id="term-subclass">Subclass and variant</dt><dd>A <b>subclass</b> (C067_01) is one design; a <b>variant</b> (C067_01a) is what we take to be one physical block of it. Decorative initials and factotums are annotated at superclass level only.</dd>
+  <dt id="term-plate">Plate</dt><dd>The level treated as one block in every analysis of who used what: a human variant, or one machine cluster.</dd>
+  <dt id="term-cluster">Cluster</dt><dd>A group of images the model judged to come from the same design (HP-8944). Clusters are machine output and have not been checked by a person; an image with a human label is never counted under its cluster as well, so nothing is counted twice.</dd>
 </dl>
 <h3 id="shares">Shares</h3>
 <dl>
-  <dt>Coverage</dt><dd>The share of a plate's books, among those with a known imprint, that name a house. A book can name several houses, so coverages can add up to more than 100%.</dd>
-  <dt>Credit</dt><dd>A house's share of all imprint credits of a class; the bar on a class page adds up to 100%.</dd>
+  <dt id="term-coverage">Coverage</dt><dd>The share of a plate's books, among those with a known imprint, that name a house. A book can name several houses, so coverages can add up to more than 100%.</dd>
+  <dt id="term-credit">Credit</dt><dd>A house's share of all imprint credits of a class; the bar on a class page adds up to 100%.</dd>
 </dl>
 <h3 id="lending">Ownership and lending</h3>
 <dl>
-  <dt>Owner</dt><dd>The house named in at least the owner share (default 70%) of a plate's books with a known imprint, on plates with at least five such books.</dd>
-  <dt>Borrower</dt><dd>A house named in only a few of the plate's books (default 5–20%), and never in a book that also names the owner. A borrower's book inside the owner's years of use suggests a loan; one long after suggests a sale or transfer.</dd>
+  <dt id="term-owner">Owner</dt><dd>The house named in at least the owner share (default 70%) of a plate's books with a known imprint, on plates with at least five such books.</dd>
+  <dt id="term-borrower">Borrower</dt><dd>A house named in only a few of the plate's books (default 5–20%), and never in a book that also names the owner. A borrower's book inside the owner's years of use suggests a loan; one long after suggests a sale or transfer.</dd>
 </dl>
 <h3 id="imprint">Imprints and houses</h3>
 <dl>
-  <dt>Imprint</dt><dd>The publisher and printer statement of the title page as transcribed in ESTC. Names are reduced to a surname key, so "Tonson, J.", "Tonson, Jacob" and "J. and R. Tonson" are one house. The price is that two people with one surname are merged.</dd>
-  <dt id="tonson">The T tag</dt><dd>Marks a book whose imprint names Tonson or Watts, or a plate whose largest holder is Tonson or Watts. The Tonson–Watts enterprise is the case study of the research.</dd>
+  <dt id="term-imprint">Imprint</dt><dd>The publisher and printer statement of the title page as transcribed in ESTC. Names are reduced to a surname key, so "Tonson, J.", "Tonson, Jacob" and "J. and R. Tonson" are one house. The price is that two people with one surname are merged.</dd>
+  <dt id="term-T">The T tag</dt><dd>Marks a book whose imprint names Tonson or Watts, or a plate whose largest holder is Tonson or Watts. The Tonson–Watts enterprise is the case study of the research.</dd>
 </dl>
 <h3 id="places">Places</h3>
 <dl>
-  <dt>Place of publication</dt><dd>The city from the ESTC record. Loaded separately; when it is missing the place panels say so.</dd>
-  <dt>Contrast</dt><dd>The total-variation distance between the place profiles of two designs of one superclass: 0 means the same mix of places, 1 means no place in common. Two variants of a design printed in different cities point to a copy rather than a lent block.</dd>
+  <dt id="term-place_share">Where it was printed</dt><dd>The city of publication from the ESTC record. Each book has one place, so on a class page the places are drawn as a pie whose slices add up to 100%. Books whose place ESTC does not know are left out and counted underneath. Clicking a place offers a side-by-side comparison of that place's images with those of the main place. ESTC's false imprints (a Paris book claiming London) are marked on the book page.</dd>
+  <dt id="term-contrast">Contrast</dt><dd>How differently two designs of one superclass are spread over cities, from 0 (the same cities in the same proportions) to 1 (no city in common); technically the total-variation distance between the two place distributions. Two variants of a design printed in different cities point to a copy rather than a lent block.</dd>
 </dl>
 <h3 id="search">Similarity</h3>
 <dl>
-  <dt>Cosine similarity</dt><dd>Closeness of two image embeddings, 1 meaning identical. Used by the image search. A similar design is not proof of the same block; the ranked classes are candidates for a person to check.</dd>
+  <dt id="term-similarity">Cosine similarity</dt><dd>Closeness of two image embeddings, 1 meaning identical. Used by the image search. A similar design is not proof of the same block; the ranked classes are candidates for a person to check.</dd>
 </dl>
 <h3 id="strip">The page strip</h3>
 <dl>
-  <dt>Dots</dt><dd>Each dot on a book's strip is a page carrying an ornament of that type, at its position in the book. Hover to preview, click to open.</dd>
+  <dt id="term-strip">Dots</dt><dd>Each dot on a book's strip is a page carrying an ornament of that type, at its position in the book. Hover to preview, click to open.</dd>
 </dl>
 </div>
 
@@ -103,4 +129,6 @@
   {% for m in cfg.PEOPLE %}<span><b>{% if m.email %}<a href="mailto:{{ m.email }}">{{ m.name }}</a>{% else %}{{ m.name }}{% endif %}</b> <span class="r">{{ m.role }}</span></span>{% endfor %}
 </div>
 <p>{{ cfg.GROUP }}. Page images are served from the project image server; bibliographic data from ECCO and ESTC.</p>
+</div>
+</div>
 {% endblock %}

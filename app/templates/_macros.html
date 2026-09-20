@@ -1,5 +1,7 @@
 {% macro help(term) %}{% set g = cfg.GLOSSARY.get(term) %}{% if g %}<span class="help" tabindex="0" role="note" aria-label="{{ g[0] }}"><a href="/about#{{ g[1] }}" tabindex="-1">?</a><span class="tip">{{ g[0] }}<a class="more" href="/about#{{ g[1] }}">more</a></span></span>{% endif %}{% endmacro %}
 
+{% macro menulink(m, text, cls='') %}<a class="menulink {{ cls }}" href="{{ m.primary[1] }}" data-title="{{ m.title }}" data-primary="{{ m.primary[0] }}" data-secondary="{{ m.secondary[0] }}" data-secondary-href="{{ m.secondary[1] }}" data-more="{{ m.more[0] }}" data-more-href="{{ m.more[1] }}">{{ text }}</a>{% endmacro %}
+
 {% macro kdot(kind) %}<i class="dot" style="background:{{ KIND_COLOR.get(kind, '#888') }}" title="{{ KIND_LABEL.get(kind, kind) }}"></i>{% endmacro %}
 
 {% macro srcboxes(avail, sel, button='Update') %}
@@ -75,7 +77,7 @@
 </figure>
 {% endmacro %}
 
-{% macro mix(items, owners, borrowers, n_known) %}
+{% macro mix(items, owners, borrowers, n_known, menus=None) %}
 {% if items %}
 <div class="mixbar" role="img" aria-label="credit share">
   {% for m in items %}<span style="width:{{ (m.credit * 100)|round(2) }}%" data-i="{{ loop.index0 % 8 }}"
@@ -84,11 +86,24 @@
 <ol class="mixlist">
   {% for m in items[:10] %}
   <li><i class="sw" data-i="{{ loop.index0 % 8 }}"></i>
-    <a href="/agent/{{ m.name }}">{{ m.display }}</a>
+    {% if menus and menus.get(m.agent_id) %}{{ menulink(menus[m.agent_id], m.display) }}{% else %}<a href="/agent/{{ m.name }}">{{ m.display }}</a>{% endif %}
     {% if m.agent_id in owners %}<span class="role owner">owner</span>{% elif m.agent_id in borrowers %}<span class="role borrower">borrower?</span>{% endif %}
     <span class="n">{{ pct(m.coverage) }}<small>{{ m.n }} of {{ n_known }}</small></span></li>
   {% endfor %}
 </ol>
 {% if items|length > 10 %}<p class="note">and {{ items|length - 10 }} more</p>{% endif %}
 {% else %}<p class="muted small">No imprint data for these books.</p>{% endif %}
+{% endmacro %}
+
+{% macro pie(slices, menus, total) %}
+<div class="pie">
+  <svg viewBox="0 0 160 160" width="150" height="150" role="img" aria-label="share of books by place of publication">
+    {% for s in slices %}{% set m = menus.get(s.key) if s.key else None %}
+    {% if m %}<a href="{{ m.primary[1] }}" class="menulink slice" data-title="{{ m.title }}" data-primary="{{ m.primary[0] }}" data-secondary="{{ m.secondary[0] }}" data-secondary-href="{{ m.secondary[1] }}" data-more="{{ m.more[0] }}" data-more-href="{{ m.more[1] }}"><path d="{{ s.d }}" class="p{{ s.i }}"><title>{{ s.place }}: {{ s.n }} of {{ total }} books</title></path></a>
+    {% else %}<path d="{{ s.d }}" class="p{{ s.i }}"><title>{{ s.place }}: {{ s.n }} books</title></path>{% endif %}
+    {% endfor %}
+  </svg>
+  <ol class="mixlist">{% for s in slices %}{% set m = menus.get(s.key) if s.key else None %}
+    <li><i class="sw" data-i="{{ s.i }}"></i>{% if m %}{{ menulink(m, s.place) }}{% else %}<span class="muted">{{ s.place }}</span>{% endif %}<span class="n">{{ pct(s.frac) }}<small>{{ s.n }}</small></span></li>{% endfor %}</ol>
+</div>
 {% endmacro %}
