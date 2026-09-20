@@ -679,11 +679,11 @@ def api_search_books(q: str = "", limit: int = 20):
 
 
 # ================================================================= admin
-@app.get("/admin/login", response_class=HTMLResponse)
 def login_configured():
     return bool(config.ADMIN_PASSWORD) or ":" in config.ADMIN_USERS
 
 
+@app.get("/admin/login", response_class=HTMLResponse)
 def admin_login_form(request: Request):
     return page(request, "admin_login.html", err=None, name="", login_configured=login_configured())
 
