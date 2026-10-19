@@ -1,0 +1,77 @@
+/* ECCO Ornament Atlas v2.5 — styles for the new parts (DESIGN §5.6, §8, §12.3).
+   Loaded after style.css. Every colour has a fallback, so this file also works
+   if a variable name in style.css differs. */
+
+/* ---- house bars: one bar per house, own denominator (replaces the stacked credit bar) */
+.hbars{list-style:none;margin:6px 0 0;padding:0;font-size:13px}
+.hbars li{display:grid;grid-template-columns:minmax(0,11em) minmax(40px,1fr) auto;gap:8px;
+  align-items:center;padding:3px 0;border-bottom:1px solid var(--rule,#e2ddd3)}
+.hbars li:last-child{border-bottom:0}
+.hb-name{overflow-wrap:anywhere;line-height:1.3}
+.hb-name .role{margin-left:4px}
+.hb-bar{display:block;height:8px;background:var(--rule,#e2ddd3);border-radius:2px;overflow:hidden}
+.hb-bar i{display:block;height:100%;background:var(--muted,#8d867b);font-style:normal}
+.hbars li.main .hb-bar i{background:var(--ink,#1c1a17)}
+.hbars li.main .hb-name a{font-weight:600}
+.hb-n{font-variant-numeric:tabular-nums;white-space:nowrap;text-align:right}
+.hb-n small{color:var(--muted,#8d867b);margin-left:3px}
+.role{display:inline-block;font-size:11px;line-height:1.4;padding:0 5px;border-radius:8px;
+  border:1px solid var(--rule,#e2ddd3);color:var(--muted,#8d867b);vertical-align:1px}
+.role.owner{border-color:var(--ink,#1c1a17);color:var(--ink,#1c1a17)}
+
+/* ---- houses through time (server-drawn SVG) */
+.swimwrap{overflow-x:auto;margin:4px 0 2px}
+.swim{width:100%;min-width:560px;height:auto;display:block;font-family:inherit}
+.swim .sw-band{fill:var(--rule,#e2ddd3);opacity:.6}
+.swim .sw-grid{stroke:var(--rule,#e2ddd3);stroke-width:1}
+.swim .sw-lane{stroke:var(--rule,#e2ddd3);stroke-width:1}
+.swim .sw-tick{font-size:11px;fill:var(--muted,#8d867b)}
+.swim .sw-name{font-size:12px;fill:var(--ink,#1c1a17)}
+.swim .sw-name.main{font-weight:700}
+.swim .sw-dot{fill:var(--muted,#8d867b);stroke:var(--paper,#faf9f6);stroke-width:1}
+.swim .sw-dot.main{fill:var(--ink,#1c1a17)}
+.swim .sw-dot.hollow{fill:var(--paper,#faf9f6);stroke:var(--rubric,#8a3324);stroke-width:1.6}
+.swim a:hover .sw-dot,.swim a:focus .sw-dot{stroke:var(--rubric,#8a3324);stroke-width:2.5}
+
+/* ---- time position: one neutral colour, no verdict colours */
+.verdict,.verdict.lending,.verdict.near,.verdict.later,.verdict.earlier,.verdict.undated{
+  display:inline-block;font-size:12px;padding:1px 7px;border-radius:9px;white-space:nowrap;
+  background:var(--rule,#e2ddd3);color:var(--ink,#1c1a17);border:0}
+.imprints table{margin-top:6px}
+.tag.fam{background:transparent;border:1px dashed var(--muted,#8d867b);color:var(--muted,#8d867b)}
+
+/* ---- places by design: one row per design */
+.dm-legend{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:12px;margin:6px 0 8px}
+.dm-legend span{display:inline-flex;align-items:center;gap:5px}
+.dm-legend .sw,.sw-other{display:inline-block;width:11px;height:11px;border-radius:2px}
+.sw-other{background:#cfcac0}
+.dm-rows{display:flex;flex-direction:column;gap:4px;margin-bottom:10px}
+.dm-row{display:grid;grid-template-columns:72px minmax(6em,9em) minmax(80px,1fr) minmax(9em,auto);
+  gap:10px;align-items:center;font-size:13px;padding:3px 0;border-bottom:1px solid var(--rule,#e2ddd3)}
+.dm-row.dim{opacity:.55}
+.dm-img img{display:block;max-width:72px;max-height:40px;object-fit:contain}
+.dm-label{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dm-row .stackbar{display:flex;height:12px;width:100%;overflow:hidden;border-radius:2px;
+  background:var(--rule,#e2ddd3);border:0}
+.dm-row .stackbar>span{flex:0 0 auto;min-width:0;height:100%;border:0;margin:0;padding:0}
+.dm-n{white-space:nowrap;font-variant-numeric:tabular-nums}
+.dm-n small{display:block;color:var(--muted,#8d867b)}
+
+/* ---- small things */
+details.settings{margin:8px 0}
+details.settings>summary,details.srcfold>summary{cursor:pointer;color:var(--muted,#8d867b);font-size:13px}
+details.srcfold{margin:8px 0}
+details.srcfold[open]>summary{margin-bottom:6px}
+div.sib{display:flex;flex-direction:column}
+.agent-summary{margin:6px 0 12px}
+.ranklist{list-style:none;margin:0;padding:0;font-size:13px}
+.ranklist li{display:flex;justify-content:space-between;gap:8px;padding:3px 0;
+  border-bottom:1px solid var(--rule,#e2ddd3)}
+.ranklist li:last-child{border-bottom:0}
+.ranklist .r{color:var(--muted,#8d867b);white-space:nowrap;font-variant-numeric:tabular-nums}
+
+@media (max-width:640px){
+  .dm-row{grid-template-columns:56px 1fr;grid-template-areas:"img label" "bar bar" "n n"}
+  .dm-img{grid-area:img}.dm-label{grid-area:label}.dm-row .stackbar{grid-area:bar}.dm-n{grid-area:n}
+  .hbars li{grid-template-columns:minmax(0,8em) 1fr auto}
+}

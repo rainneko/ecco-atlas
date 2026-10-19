@@ -9,6 +9,11 @@ online backbone weights, and writes them to `model_store`. The web app rebuilds
 the backbone from that state dict with timm / torchvision alone.
 
 Needs torch on the machine that runs it (the web pod has it).
+
+v2.5: torch >= 2.6 loads with weights_only=True by default and refuses
+Lightning checkpoints (they contain hyper-parameters, not only tensors). The
+checkpoint is our own file, so it is loaded with weights_only=False. The
+stored state dict holds tensors only, so the web app loads it safely.
 """
 from __future__ import annotations
 
@@ -86,7 +91,10 @@ def main():
         sys.exit("set DATABASE_URL or pass --dsn")
     import torch
 
-    ck = torch.load(a.ckpt, map_location="cpu")
+    try:
+        ck = torch.load(a.ckpt, map_location="cpu", weights_only=False)
+    except TypeError:                       # torch < 1.13 has no weights_only
+        ck = torch.load(a.ckpt, map_location="cpu")
     state = ck.get("state_dict", ck)
     hparams = ck.get("hyper_parameters", {}) or {}
     arch = a.arch or detect_arch(hparams, state.keys())

@@ -5,9 +5,15 @@
     python -m etl.load_embeddings --model moco_vit_s --replace emb_HP.npz     # swap one type
 
 Each npz (from tools/export_embeddings.py) holds `id`, `boxes`, `emb`, `meta`.
-Rows are matched to ornaments by (image id, box) and then by IoU >= 0.9;
-vectors are stored as float16. After the last file the centroids of every
-machine cluster and human plate, and the 300-per-type samples, are rebuilt.
+Rows are matched to ornaments of the file's own type by (image id, box) and
+then by IoU >= 0.9; vectors are stored as float16. After the last file the
+centroids of every machine cluster and human plate, and the 300-per-type
+samples, are rebuilt.
+
+v2.5: one vector per ornament. emb_TP.npz is made from the raw TPPD.csv,
+which has duplicate rows; two rows for one ornament made the COPY fail. An
+exact key now also has to match the file's type, because TP rows whose box
+belongs to an HP ornament were removed from TP at load time (DESIGN §3.4).
 
 A CSV with columns id, boxes, e0..e{D-1} (or a single `embedding` column with
 a JSON list) is accepted for small tests.
@@ -15,7 +21,6 @@ a JSON list) is accepted for small tests.
 from __future__ import annotations
 
 import argparse
-import ast
 import io
 import json
 import os
@@ -85,7 +90,9 @@ def load_one(conn, path: Path, thresh: float):
                   f"{box[2]}\t{box[3]}\t\\N\n")
     buf.seek(0)
     cur.copy_expert("COPY _emb FROM STDIN WITH (FORMAT text, NULL '\\N')", buf)
-    cur.execute("UPDATE _emb t SET target = t.oid FROM ornament o WHERE o.oid = t.oid")
+    # exact key, and only an ornament of this file's type (v2.5)
+    cur.execute("""UPDATE _emb t SET target = t.oid FROM ornament o
+                   WHERE o.oid = t.oid AND o.kind = %s""", (kind,))
     n_exact = cur.rowcount
     cur.execute(f"""
         SELECT t.idx, o.oid, {iou_sql('t', 'o')} AS iou
@@ -104,8 +111,16 @@ def load_one(conn, path: Path, thresh: float):
         psycopg2.extras.execute_values(
             cur, "UPDATE _emb t SET target = v.o FROM (VALUES %s) v(i, o) WHERE t.idx = v.i",
             list(assign.items()), page_size=5000)
-    cur.execute("SELECT idx, target FROM _emb WHERE target IS NOT NULL")
+    cur.execute("SELECT idx, target FROM _emb WHERE target IS NOT NULL ORDER BY idx")
     matched = cur.fetchall()
+    # one vector per ornament: the first row wins (v2.5)
+    seen, unique = set(), []
+    for idx, oid in matched:
+        if oid not in seen:
+            seen.add(oid)
+            unique.append((idx, oid))
+    n_dup = len(matched) - len(unique)
+    matched = unique
     # vectors: COPY as hex bytea
     cur.execute("DELETE FROM ornament_embedding e USING ornament o "
                 "WHERE o.oid = e.oid AND o.kind = %s", (kind,))
@@ -116,8 +131,8 @@ def load_one(conn, path: Path, thresh: float):
     cur.copy_expert("COPY ornament_embedding (oid, vec) FROM STDIN WITH (FORMAT text)", buf)
     conn.commit()
     print(f"[{kind}] {path.name}: {n:,} rows, {E.shape[1]}-d; matched exactly {n_exact:,}, "
-          f"by IoU {len(assign):,}; unmatched {n - n_exact - len(assign) - bad:,}; "
-          f"bad rows {bad:,}")
+          f"by IoU {len(assign):,}; duplicate rows dropped {n_dup:,}; "
+          f"unmatched {n - n_exact - len(assign) - bad:,}; bad rows {bad:,}")
     return kind, E.shape[1], meta, len(matched)
 
 

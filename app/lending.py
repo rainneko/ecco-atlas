@@ -1,9 +1,15 @@
-"""Ownership and lending (DESIGN §4.5).
+"""Unusual imprints — formerly "lending" (DESIGN §4.5).
+
+A block appears almost always in books that name one house (the main house) and
+occasionally in books that name another house and not the main one. This module
+finds those books and places them in time. It does NOT say why: trade-publisher
+imprints, a printer working for several booksellers, sale of stock, reissues,
+copied blocks and data errors all produce the same pattern.
 
 Pure functions over (book, year, agents) rows so the same logic serves the
-class page (computed on the class's own members) and the /lending list
-(computed on plates pre-filtered in SQL). Thresholds are parameters, never
-constants in SQL.
+class page and the /lending list. Thresholds are parameters, never constants
+in SQL. Internal names (owner, borrower, verdict keys) are kept for
+compatibility with stored reviews and URLs; the interface wording is neutral.
 """
 from __future__ import annotations
 
@@ -47,12 +53,14 @@ class Params:
         return self == Params()
 
 
+# Time position of a case relative to the main house's dated use. Descriptive
+# only; the keys are unchanged from v2.0 so stored links and CSVs keep working.
 VERDICTS = {
-    "lending": ("Lending", "inside the owner's years of use"),
-    "near": ("Lending (near)", "within the year gap of the owner's use"),
-    "later": ("Later holder?", "after the owner's last use: transfer or sale"),
-    "earlier": ("Earlier holder?", "before the owner's first use"),
-    "undated": ("Undated", "the book has no year"),
+    "lending": ("Within its years", "inside the years the main house used this block"),
+    "near": ("Close to its years", "within the year gap of the main house's use"),
+    "later": ("After its years", "after the main house's last dated use"),
+    "earlier": ("Before its years", "before the main house's first dated use"),
+    "undated": ("Undated", "no year to compare"),
 }
 
 
@@ -67,16 +75,27 @@ def verdict(year, y0, y1, gap):
     return ("earlier" if year < y0 else "later"), d
 
 
+def trade_publisher(name, year=None) -> bool:
+    """True when the surname key is a known trade publisher in that year."""
+    span = config.TRADE_PUBLISHERS.get(name or "")
+    if span is None:
+        return False
+    y0, y1 = (tuple(span) + (None, None))[:2]
+    if year is None:
+        return True
+    return (y0 is None or year >= y0) and (y1 is None or year <= y1)
+
+
 @dataclass
 class PlateResult:
     n_known: int = 0
     share: dict = field(default_factory=dict)      # agent_id -> coverage
-    owners: list = field(default_factory=list)
-    borrowers: list = field(default_factory=list)
-    events: list = field(default_factory=list)
+    owners: list = field(default_factory=list)      # main house(s)
+    borrowers: list = field(default_factory=list)   # other houses with cases
+    events: list = field(default_factory=list)      # cases
     owner_span: tuple = (None, None)
     owner_median: float | None = None
-    eligible: bool = False                          # enough books to judge
+    eligible: bool = False
 
 
 def analyse(books: dict, agents_by_book: dict, p: Params) -> PlateResult:
@@ -102,7 +121,7 @@ def analyse(books: dict, agents_by_book: dict, p: Params) -> PlateResult:
             continue
         bb = [b for b in known if a in agents_by_book[b] and not (agents_by_book[b] & own)]
         if not bb:
-            continue                       # only ever co-signed with the owner: co-publishing
+            continue                       # only ever co-signed with the main house
         r.borrowers.append(a)
         for b in sorted(bb, key=lambda b: (books[b][0] or 9999, b)):
             y = books[b][0]
@@ -128,7 +147,7 @@ _memo: dict = {}
 
 
 def find_events(p: Params, srcs, agent_id=None, plate=None):
-    """All suspected lending events for the selected sources. Memoised for two
+    """All unusual-imprint cases for the selected sources. Memoised for two
     minutes per parameter set; the candidate plates are pre-filtered in SQL."""
     key = (p.owner, p.lo, p.hi, p.min_books, p.gap, tuple(sorted(srcs)), agent_id, plate,
            db.meta().get("derived_at"))

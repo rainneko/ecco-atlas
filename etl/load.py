@@ -24,6 +24,11 @@ Flags
     --ann-iou 0.9    IoU above which an annotation box is the same detection
     --no-replay      do not re-apply admin corrections after loading
     --no-derived     skip rebuilding the summary views
+
+v2.5: the small runtime schema additions (thumb_store, label_change columns)
+are applied after schema.sql; a cluster rejection is replayed only when the
+ornament is still in the cluster that was rejected; ESTC numbers are
+normalised before places are matched (T089836 = T89836).
 """
 from __future__ import annotations
 
@@ -46,6 +51,7 @@ import psycopg2.extras
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from app import config, derived  # noqa: E402
 from app import normalize as N  # noqa: E402
+from app.db import RUNTIME_SCHEMA  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 DEFAULT_NAMES = HERE / "data" / "hp_superclass_names.csv"
@@ -69,6 +75,19 @@ ORN_COLS = ["oid", "image_id", "box_key", "x1", "y1", "x2", "y2", "kind", "book_
 
 def log(msg):
     print(msg, flush=True)
+
+
+def norm_estc(v):
+    """'T089836' / 't 89836' -> 'T89836'; the same rule as estc_sql()."""
+    if v is None:
+        return None
+    s = re.sub(r"\s+", "", str(v)).upper()
+    return re.sub(r"^([A-Z])0+", r"\1", s) or None
+
+
+def estc_sql(col):
+    """SQL form of norm_estc() for a column."""
+    return f"regexp_replace(upper(replace({col}, ' ', '')), '^([A-Z])0+', '\\1')"
 
 
 # =============================================================== reading
@@ -326,7 +345,7 @@ def load_tp(conn, df, src, replace, thresh):
     books = df[df["oid"].isin({r[0] for r in cur.fetchall()})]
     upsert_books(cur, books)
     cur.execute(pred_update_sql(src))
-    log(f"  ornaments upserted: {cur.rowcount:,}")
+    log(f"  ornaments upserted: {cur.rowcount:,} (of {keep:,} kept)")
     conn.commit()
 
 
@@ -389,16 +408,26 @@ def load_ann(conn, df, src, replace, thresh):
 
 # =============================================================== after load
 def replay(conn):
-    """Re-apply the latest human change per ornament (DESIGN §3.8)."""
+    """Re-apply the latest human change per ornament (DESIGN §3.8).
+
+    v2.5: a cluster rejection is re-applied only while the ornament is still
+    in the cluster that was rejected. After --replace a new model run may put
+    it in a different cluster, and the old judgement does not apply to that.
+    Older rows recorded no cluster (NULL) and are re-applied as before."""
     cur = conn.cursor()
-    cur.execute("""SELECT DISTINCT ON (oid) oid, new_ann_src, new_superclass, new_subclass,
-                          new_variant, new_cluster_rejected
-                   FROM label_change ORDER BY oid, changed_at DESC, change_id DESC""")
-    rows = []
-    for oid, s, sup, sub, var, rej in cur.fetchall():
+    cur.execute("""SELECT DISTINCT ON (lc.oid) lc.oid, lc.new_ann_src, lc.new_superclass,
+                          lc.new_subclass, lc.new_variant, lc.new_cluster_rejected,
+                          lc.rej_pred_src, lc.rej_hc_cluster, o.pred_src, o.hc_cluster
+                   FROM label_change lc JOIN ornament o USING (oid)
+                   ORDER BY lc.oid, lc.changed_at DESC, lc.change_id DESC""")
+    rows, stale = [], 0
+    for oid, s, sup, sub, var, rej, rps, rhc, ps, hc in cur.fetchall():
         path = N.class_path_for(s, sup, sub, var or "") if s in config.SOURCES else None
+        rej = bool(rej)
+        if rej and rhc is not None and (rps != ps or rhc != hc):
+            rej, stale = False, stale + 1
         rows.append((oid, s if path else None, sup if path else None, sub if path else None,
-                     (var or "") if path else "", path, bool(rej)))
+                     (var or "") if path else "", path, rej))
     if rows:
         psycopg2.extras.execute_values(cur, """
             UPDATE ornament o SET ann_src = v.s, superclass = v.sup, subclass = v.sub,
@@ -406,7 +435,9 @@ def replay(conn):
             FROM (VALUES %s) v(oid, s, sup, sub, var, path, rej) WHERE o.oid = v.oid
         """, rows, page_size=2000)
     conn.commit()
-    log(f"admin corrections re-applied: {len(rows):,}")
+    log(f"admin corrections re-applied: {len(rows):,}"
+        + (f" ({stale:,} cluster rejections not re-applied: the ornament is now in "
+           f"another cluster)" if stale else ""))
 
 
 def load_names(conn, path: Path):
@@ -460,7 +491,7 @@ def load_book_meta(conn, path: Path):
         if isinstance(r.get("book_id"), str) and r["book_id"].strip():
             where, key = "book_id = %(k)s", r["book_id"].strip().zfill(10)
         elif isinstance(r.get("ESTCID"), str):
-            where, key = "estc_id = %(k)s", r["ESTCID"].strip()
+            where, key = f"{estc_sql('estc_id')} = %(k)s", norm_estc(r["ESTCID"])
         else:
             continue
         cur.execute(f"""UPDATE book SET full_title = COALESCE(full_title, %(title)s),
@@ -489,7 +520,8 @@ PLACE_COLS = {
 
 def load_places(conn, path: Path, replace=False):
     """Places of publication from an ESTC export (DESIGN §12.1). Matches books
-    by ESTC id (or book_id when present); fills gaps unless --replace-places."""
+    by ESTC id (or book_id when present); fills gaps unless --replace-places.
+    v2.5: ESTC numbers are normalised on both sides (T089836 = T89836)."""
     df = pd.read_csv(path, dtype=str, sep=None, engine="python")
     cols = {re.sub(r"\s+", " ", c.strip()).lower(): c for c in df.columns}
 
@@ -515,7 +547,7 @@ def load_places(conn, path: Path, replace=False):
         if place:
             key = re.sub(r"[\[\]?.]", "", place.split(":")[0].split(";")[0]).strip().lower() or None
         fi = clean(r.get(c_false)) if c_false else None
-        rows.append((clean(r.get(c_estc)) if c_estc else None,
+        rows.append((norm_estc(clean(r.get(c_estc))) if c_estc else None,
                      (clean(r.get(c_bid)) or "").zfill(10) if c_bid and clean(r.get(c_bid)) else None,
                      place, key, clean(r.get(c_country)) if c_country else None,
                      None if fi is None else fi.lower() in ("true", "1", "t", "yes"),
@@ -537,12 +569,16 @@ def load_places(conn, path: Path, replace=False):
             lat = COALESCE({'p.lat, b.lat' if replace else 'b.lat, p.lat'}),
             lon = COALESCE({'p.lon, b.lon' if replace else 'b.lon, p.lon'})
         FROM _pl p WHERE (p.book_id IS NOT NULL AND p.book_id = b.book_id)
-                      OR (p.book_id IS NULL AND p.estc IS NOT NULL AND p.estc = b.estc_id)""")
+                      OR (p.book_id IS NULL AND p.estc IS NOT NULL
+                          AND p.estc = {estc_sql('b.estc_id')})""")
     n = cur.rowcount
     conn.commit()
     cur.execute("SELECT count(*) FROM book WHERE place_key IS NOT NULL")
     log(f"places: {len(rows):,} rows in {path.name}; {n:,} books updated; "
         f"{cur.fetchone()[0]:,} books now have a place")
+    if rows and n == 0:
+        log("  ! no book matched. Compare an ESTC number in the file with book.estc_id "
+            "(e.g. SELECT estc_id FROM book LIMIT 5).")
 
 
 def schema_state(cur):
@@ -575,8 +611,8 @@ def reset(conn, force):
     for t in ("v_ornament_full", "v_subclass_df"):
         cur.execute(f"DROP VIEW IF EXISTS {t} CASCADE")
     # model_store is kept: the checkpoint is not derived from the CSVs
-    for t in ("lending_review", "label_change", "report", "crop_store", "class_name",
-              "ornament_alias", "cluster_link", "kind_sample", "cluster_centroid",
+    for t in ("lending_review", "label_change", "report", "crop_store", "thumb_store",
+              "class_name", "ornament_alias", "cluster_link", "kind_sample", "cluster_centroid",
               "ornament_embedding", "embedding_model", "ornament", "book_agent", "agent",
               "book", "upload", "meta"):
         cur.execute(f"DROP TABLE IF EXISTS {t} CASCADE")
@@ -640,6 +676,7 @@ def main():
     elif state == "v1":
         sys.exit("This database has the v1 schema. Re-run once with --reset (DESIGN §10).")
     cur.execute((HERE / "schema.sql").read_text())
+    cur.execute(RUNTIME_SCHEMA)                    # v2.5 additions (DESIGN §3.8)
     conn.commit()
     log("schema ok")
 
@@ -679,9 +716,8 @@ def main():
         replay(conn)
     cur.execute("ANALYZE")
     conn.commit()
-    if not a.no_derived and (jobs or a.books or a.places):
-        log(f"summary views rebuilt in {derived.rebuild(conn):.1f}s")
-    elif not a.no_derived:
+    if not a.no_derived:
+        log("rebuilding summary views — the site waits for this; run loads outside working hours")
         log(f"summary views rebuilt in {derived.rebuild(conn):.1f}s")
     summary(conn)
     log(f"done in {time.time() - t0:.1f}s")

@@ -27,7 +27,8 @@
   <div class="wb-grid">
   {% for m in b['items'] %}
     <div class="wb-card" draggable="true" data-oid="{{ m.oid }}" data-orig="{{ b.key }}">
-      <img loading="lazy" src="{{ crop_url(m.oid, 900) }}" alt="{{ m.label or '' }}">
+      {# 300 px: the cards are 190 px high; 900 px meant hundreds of large downloads per page (v2.5) #}
+      <img loading="lazy" src="{{ crop_url(m.oid, 300) }}" alt="{{ m.label or '' }}">
       <div class="cap"><b>{{ m.year or 'n.d.' }}</b> <a href="/ornament/{{ m.oid }}" target="_blank" rel="noopener">{{ m.label or 'unlabelled' }}</a>{% if m.is_tonson %} <span class="tag">T</span>{% endif %}<br>
         <span class="muted">{{ (m.full_title or m.book_id)[:44] }}, p. {{ m.page }}</span></div>
       <select aria-label="Move to"></select>
@@ -48,4 +49,4 @@
 </section>
 </div>
 {% endblock %}
-{% block scripts %}<script src="/static/workbench.js?v=2"></script>{% endblock %}
+{% block scripts %}<script src="/static/workbench.js?v={{ asset_v }}"></script>{% endblock %}

@@ -2,6 +2,8 @@
 routes stay thin and the query plans can be audited in one file."""
 from __future__ import annotations
 
+import logging
+import re
 import threading
 import time
 import uuid
@@ -13,6 +15,7 @@ from psycopg2 import pool as pgpool
 from . import config
 from . import normalize as N
 
+log = logging.getLogger("ecco.db")
 _pool: pgpool.ThreadedConnectionPool | None = None
 _sem: threading.BoundedSemaphore | None = None
 _lock = threading.Lock()
@@ -98,6 +101,34 @@ def clear_cache():
     _cache.clear()
 
 
+def like_escape(s: str) -> str:
+    """Take % and _ literally in a LIKE pattern (the default escape is backslash)."""
+    return s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+# ================================================================= runtime schema (v2.5)
+RUNTIME_SCHEMA = """
+CREATE TABLE IF NOT EXISTS thumb_store (
+    oid TEXT PRIMARY KEY,
+    jpeg BYTEA NOT NULL,
+    made_at TIMESTAMPTZ NOT NULL DEFAULT now());
+DO $$ BEGIN
+  IF to_regclass('label_change') IS NOT NULL THEN
+    ALTER TABLE label_change ADD COLUMN IF NOT EXISTS rej_pred_src TEXT;
+    ALTER TABLE label_change ADD COLUMN IF NOT EXISTS rej_hc_cluster TEXT;
+  END IF;
+END $$;
+"""
+
+
+def ensure_runtime_schema():
+    """Small additive schema changes of v2.5, safe to run on every start."""
+    try:
+        x(RUNTIME_SCHEMA)
+    except Exception as e:  # noqa: BLE001 — never keep the site from starting
+        log.warning("runtime schema not applied: %s", e)
+
+
 # ================================================================= site
 @cached(60)
 def sources_available():
@@ -144,12 +175,27 @@ def _words(term):
     return [w for w in N.norm_title(term).split() if w]
 
 
+def book_by_ident(term):
+    """An ESTC number (T089836, N12345) or a 10-digit ECCO id -> book_id, else None."""
+    t = (term or "").strip()
+    if re.fullmatch(r"\d{10}", t):
+        r = q("SELECT book_id FROM book WHERE book_id = %s", (t,), one=True)
+        return r["book_id"] if r else None
+    m = re.fullmatch(r"(?i)([A-Z])0*(\d{1,7})", t)
+    if m:
+        r = q("""SELECT book_id FROM book
+                 WHERE regexp_replace(upper(estc_id), '^([A-Z])0+', '\\1') = %s
+                 LIMIT 1""", (m.group(1).upper() + m.group(2),), one=True)
+        return r["book_id"] if r else None
+    return None
+
+
 def suggest_words(words):
     """Closest vocabulary word for each query word that no title contains
     (trigram similarity on ~50k short words; DESIGN §4.7)."""
     out = {}
     for w in words:
-        r = q("""SELECT word FROM book_word WHERE word %% %(w)s
+        r = q("""SELECT word FROM book_word WHERE word %% %(w)s AND similarity(word, %(w)s) >= 0.5
                  ORDER BY similarity(word, %(w)s) DESC, n DESC LIMIT 1""", {"w": w}, one=True)
         if r and r["word"] != w:
             out[w] = r["word"]
@@ -261,10 +307,12 @@ def book_ornaments(book_id):
 
 def similar_books(book_id, srcs, limit=10):
     """Cosine over idf-weighted plate sets (weight 1/ln(1 + books with the
-    plate)); sharing a rare plate counts far more than sharing a common one."""
+    plate)). Plates found in more than SIMILAR_MAX_PLATE_BOOKS books are
+    ignored: they made the query slow and say nothing about two books (v2.5)."""
     return q("""
         WITH tgt AS (SELECT plate FROM mv_book_plate WHERE book_id = %(b)s AND src = ANY(%(s)s)),
-        w AS (SELECT p.plate, 1.0 / ln(1 + p.n_books) AS wt FROM mv_plate p JOIN tgt USING (plate)),
+        w AS (SELECT p.plate, 1.0 / ln(1 + p.n_books) AS wt FROM mv_plate p JOIN tgt USING (plate)
+              WHERE p.n_books <= %(cap)s),
         tn AS (SELECT sqrt(sum(wt * wt)) AS n FROM w),
         cand AS (SELECT bp.book_id, sum(w.wt * w.wt) AS dot, count(*) AS shared
                  FROM mv_book_plate bp JOIN w USING (plate)
@@ -283,7 +331,7 @@ def similar_books(book_id, srcs, limit=10):
         CROSS JOIN (SELECT place_key FROM book WHERE book_id = %(b)s) t
         ORDER BY score DESC NULLS LAST, c.shared DESC, n_orn DESC
         LIMIT %(lim)s
-    """, {"b": book_id, "s": list(srcs), "lim": limit})
+    """, {"b": book_id, "s": list(srcs), "lim": limit, "cap": config.SIMILAR_MAX_PLATE_BOOKS})
 
 
 # ================================================================= ornaments
@@ -298,7 +346,7 @@ def get_ornament(oid):
 
 def get_ornament_min(oid):
     """What the image routes need, nothing else."""
-    return q("""SELECT oid, image_id, x1, y1, x2, y2, ann_src FROM ornament
+    return q("""SELECT oid, image_id, x1, y1, x2, y2, ann_src, kind FROM ornament
                 WHERE oid = %s""", (oid,), one=True)
 
 
@@ -312,11 +360,14 @@ def names_for(src, pairs):
 
 
 def similar_ornaments(o, method, limit=3):
-    """Phase 1: rule-based. Hierarchy for human-labelled ornaments, cluster
-    otherwise. Embedding cosine (Phase 2) will replace the body of this
-    function only."""
+    """Rule-based: hierarchy for human-labelled ornaments, cluster otherwise.
+    The embedding method lives in main/embedding (it needs the index)."""
     S = config.SIM_SCORES
     if method == "hier" and o["ann_src"]:
+        # DI/FT annotation have no subclass level; their raw subclass codes must
+        # not produce "same subclass" (v2.5)
+        has_sub = "subclass" in config.SOURCES[o["ann_src"]]["levels"]
+        sub = (o["subclass"] or "") if has_sub else "\x00none"
         return q("""
             SELECT o.oid, o.label, o.kind, o.book_id, b.year, b.full_title,
                    CASE WHEN o.variant <> '' AND o.variant = %(var)s AND o.subclass = %(sub)s
@@ -330,7 +381,7 @@ def similar_ornaments(o, method, limit=3):
             WHERE o.ann_src = %(src)s AND o.superclass = %(sup)s AND o.oid <> %(oid)s
               AND o.class_path IS NOT NULL
             ORDER BY score DESC, b.year NULLS LAST, o.oid LIMIT %(lim)s
-        """, dict(src=o["ann_src"], sup=o["superclass"], sub=o["subclass"] or "",
+        """, dict(src=o["ann_src"], sup=o["superclass"], sub=sub,
                   var=o["variant"] or "", oid=o["oid"], lim=limit, sv=S["variant"],
                   ss=S["subclass"], sp=S["superclass"]))
     if method == "cluster" and o["hc_cluster"] and not o["cluster_rejected"]:
@@ -347,8 +398,22 @@ def similar_ornaments(o, method, limit=3):
 
 
 def embeddings_available():
-    r = q("SELECT to_regclass('ornament_embedding') IS NOT NULL AS ok", one=True)
-    return bool(r and r["ok"])
+    """True only when vectors have actually been loaded (v2.5: was table exists)."""
+    try:
+        r = q("""SELECT to_regclass('ornament_embedding') IS NOT NULL
+                        AND EXISTS (SELECT 1 FROM ornament_embedding LIMIT 1) AS ok""", one=True)
+        return bool(r and r["ok"])
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def ornament_vector(oid):
+    """Raw float16 bytes of an ornament's stored vector, or None."""
+    try:
+        r = q("SELECT vec FROM ornament_embedding WHERE oid = %s", (oid,), one=True)
+        return bytes(r["vec"]) if r else None
+    except Exception:  # noqa: BLE001 — table missing or not loaded
+        return None
 
 
 # ================================================================= classes
@@ -401,7 +466,7 @@ def class_members(src, level, value, order="year", limit=120, offset=0):
 
 def class_book_agents(src, level, value):
     """(book, agent, role) rows for every book of the class — enough to compute
-    composition, ownership and lending in Python."""
+    composition, the main house and unusual imprints in Python."""
     return q(f"""
         WITH bks AS (SELECT DISTINCT o.book_id FROM ornament o WHERE {class_cond(src, level)})
         SELECT bks.book_id, b.year, b.full_title, b.has_imprint, b.place, b.place_key,
@@ -422,7 +487,7 @@ def mv_classes(src, level, values):
 def class_structure(src, level, value, sup, sub):
     """Children / siblings for the 'structure' section of a class page."""
     out = {"children": [], "siblings": [], "side": []}
-    if level == "cluster":
+    if level == "cluster" or "subclass" not in config.SOURCES[src]["levels"]:
         return out
     if level == "superclass":
         subs = [r["subclass"] for r in q(
@@ -434,7 +499,7 @@ def class_structure(src, level, value, sup, sub):
     variants = q("""SELECT c.*, p.t_owned FROM mv_class c
                     LEFT JOIN mv_plate p ON p.plate = c.plate_key
                     WHERE c.src = %s AND c.level = 'variant' AND c.value LIKE %s""",
-                 (src, f"{sup}/{sub}/%"))
+                 (src, like_escape(f"{sup}/{sub}/") + "%"))
     variants.sort(key=lambda r: N.natural_key(r["value"]))
     if level == "subclass":
         out["children"] = variants
@@ -465,18 +530,23 @@ def class_crossref(src, level, value):
 SORTS = {"name": None, "n": "c.n", "books": "c.n_books", "first": "c.y0", "last": "c.y1",
          "span": "(c.y1 - c.y0)"}
 
+# the displayed label of a variant (C067/C067_01/a -> c067_01a); '' for other levels
+_VARIANT_LABEL = "lower(split_part(c.value, '/', 2) || split_part(c.value, '/', 3))"
+
 
 def browse_classes(src, level, term="", sort="n", desc=True, limit=100, offset=0):
-    like = f"%{(term or '').strip().lower()}%"
+    t = (term or "").strip().lower()
+    like = f"%{like_escape(t)}%"
     d = "DESC" if desc else "ASC"
     if sort == "name" or sort not in SORTS:
         order = (f"(c.value ~ '^[0-9]+$') {d}, length(c.value) {d}, c.value {d}"
                  if level == "cluster" else f"c.value {d}")
     else:
         order = f"{SORTS[sort]} {d} NULLS LAST, c.value"
-    params = {"src": src, "lvl": level, "t": like, "lim": limit, "off": offset}
-    where = """c.src = %(src)s AND c.level = %(lvl)s
-               AND (%(t)s = '%%' OR lower(c.value) LIKE %(t)s OR lower(cn.name) LIKE %(t)s
+    params = {"src": src, "lvl": level, "t": like, "all": not t, "lim": limit, "off": offset}
+    where = f"""c.src = %(src)s AND c.level = %(lvl)s
+               AND (%(all)s OR lower(c.value) LIKE %(t)s OR {_VARIANT_LABEL} LIKE %(t)s
+                    OR lower(cn.name) LIKE %(t)s
                     OR lower(cn.alt_name) LIKE %(t)s OR lower(cs.name) LIKE %(t)s)"""
     joins = """LEFT JOIN class_name cn ON cn.src = c.src AND cn.level = c.level
                                        AND cn.value = c.value
@@ -535,7 +605,8 @@ AGENT_SORTS = {"books": "n_books", "plates": "n_plates", "owned": "n_owned", "na
 
 
 def agents_list(term, srcs, sort="books", desc=True, limit=200):
-    like = f"%{(term or '').strip().lower()}%"
+    t = (term or "").strip().lower()
+    like = f"%{like_escape(t)}%"
     order = AGENT_SORTS.get(sort, "n_books")
     d = "DESC" if desc else "ASC"
     return q(f"""
@@ -548,9 +619,9 @@ def agents_list(term, srcs, sort="books", desc=True, limit=200):
               FROM book_agent GROUP BY agent_id) b USING (agent_id)
         LEFT JOIN (SELECT agent_id, sum(n_plates) AS n_plates, sum(n_owned) AS n_owned
                    FROM mv_agent_src WHERE src = ANY(%(s)s) GROUP BY agent_id) s USING (agent_id)
-        WHERE (%(t)s = '%%' OR a.name LIKE %(t)s OR lower(a.display_name) LIKE %(t)s)
+        WHERE (%(all)s OR a.name LIKE %(t)s OR lower(a.display_name) LIKE %(t)s)
         ORDER BY {order} {d} NULLS LAST, a.name LIMIT %(lim)s
-    """, {"t": like, "s": list(srcs), "lim": limit})
+    """, {"t": like, "all": not t, "s": list(srcs), "lim": limit})
 
 
 def agent_stats(agent_id, srcs):
@@ -606,7 +677,7 @@ def similar_agents(agent_id, srcs, limit=10):
 
 
 def coholders(agent_id, srcs, min_share=None, min_books=None, limit=10):
-    """Σ over plates both hold (coverage >= min_share) of min(coverage_A, coverage_B)."""
+    """Σ over plates both appear with (coverage >= min_share) of min(coverage_A, coverage_B)."""
     return q("""
         WITH mine AS (SELECT plate, share FROM mv_plate_agent
                       WHERE agent_id = %(a)s AND src = ANY(%(s)s)
@@ -649,7 +720,7 @@ def pair_joint(a, b, srcs, limit=120, offset=0):
     return rows, tot["n"], tot["n_books"]
 
 
-# ================================================================= lending
+# ================================================================= unusual imprints
 def lending_plates(srcs, owner, lo, hi, min_books, plate=None, agent_id=None):
     cond, params = [], {"s": list(srcs), "own": owner, "lo": lo, "hi": hi, "mb": min_books}
     if plate:
@@ -683,6 +754,15 @@ def plate_info(plates):
     return {r["plate"]: r for r in q(
         "SELECT plate, src, kind, exemplar, n_books, n_known, y0, y1, t_owned FROM mv_plate "
         "WHERE plate = ANY(%s)", (list(plates),))}
+
+
+def books_naming_printer(book_ids):
+    """Set of book_ids whose imprint names at least one printer."""
+    if not book_ids:
+        return set()
+    return {r["book_id"] for r in q(
+        "SELECT DISTINCT book_id FROM book_agent WHERE role = 'printer' AND book_id = ANY(%s)",
+        (list(book_ids),))}
 
 
 def lending_reviews(plates):
@@ -720,23 +800,44 @@ def put_crop_store(oid, full, thumb, width):
       (oid, psycopg2.Binary(full), psycopg2.Binary(thumb), width))
 
 
+def get_thumb(oid):
+    r = q("SELECT jpeg FROM thumb_store WHERE oid = %s", (oid,), one=True)
+    return bytes(r["jpeg"]) if r else None
+
+
+def put_thumb(oid, jpeg):
+    x("""INSERT INTO thumb_store (oid, jpeg) VALUES (%s, %s)
+         ON CONFLICT (oid) DO NOTHING""", (oid, psycopg2.Binary(jpeg)))
+
+
 def crop_store_stats():
-    return q("""SELECT (SELECT count(*) FROM crop_store) AS stored,
-                       (SELECT count(*) FROM ornament WHERE ann_src IS NOT NULL) AS annotated,
-                       (SELECT pg_size_pretty(pg_total_relation_size('crop_store'))) AS size""",
-             one=True)
+    r = q("""SELECT (SELECT count(*) FROM crop_store) AS stored,
+                    (SELECT count(*) FROM ornament WHERE ann_src IS NOT NULL) AS annotated,
+                    (SELECT pg_size_pretty(pg_total_relation_size('crop_store'))) AS size""",
+          one=True)
+    try:
+        t = q("""SELECT count(*) AS n, pg_size_pretty(pg_total_relation_size('thumb_store')) AS size
+                 FROM thumb_store""", one=True)
+        r = dict(r, thumbs=t["n"], thumbs_size=t["size"])
+    except Exception:  # noqa: BLE001
+        r = dict(r, thumbs=0, thumbs_size="–")
+    return r
 
 
 # ================================================================= human changes
 def apply_changes(changes, who, batch_id=None, report_id=None):
     """changes: [{oid, action, ann_src, superclass, subclass, variant, rejected}]
     — the full *new* human state of each ornament. Writes label_change first,
-    then the ornament, in one transaction (the history can never lag behind)."""
+    then the ornament, in one transaction (the history can never lag behind).
+    v2.5: a cluster rejection also records WHICH cluster was rejected, so a new
+    model run does not inherit it (DESIGN §3.5)."""
     if not changes:
         return 0
+    ensure_runtime_schema()          # cheap; the columns below must exist
     batch_id = batch_id or uuid.uuid4().hex[:12]
     with conn_cursor(commit=True) as c:
-        c.execute("""SELECT oid, ann_src, superclass, subclass, variant, cluster_rejected
+        c.execute("""SELECT oid, ann_src, superclass, subclass, variant, cluster_rejected,
+                            pred_src, hc_cluster
                      FROM ornament WHERE oid = ANY(%s) FOR UPDATE""",
                   ([ch["oid"] for ch in changes],))
         old = {r["oid"]: r for r in c.fetchall()}
@@ -754,12 +855,14 @@ def apply_changes(changes, who, batch_id=None, report_id=None):
             c.execute("""INSERT INTO label_change (oid, action, report_id, batch_id,
                              old_ann_src, old_superclass, old_subclass, old_variant,
                              new_ann_src, new_superclass, new_subclass, new_variant,
-                             old_cluster_rejected, new_cluster_rejected, changed_by)
-                         VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                             old_cluster_rejected, new_cluster_rejected, changed_by,
+                             rej_pred_src, rej_hc_cluster)
+                         VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                       (ch["oid"], ch["action"], report_id, batch_id,
                        o["ann_src"], o["superclass"], o["subclass"], o["variant"],
                        s, ch.get("superclass"), ch.get("subclass"), ch.get("variant") or "",
-                       o["cluster_rejected"], rej, who))
+                       o["cluster_rejected"], rej, who,
+                       o["pred_src"] if rej else None, o["hc_cluster"] if rej else None))
             c.execute("""UPDATE ornament SET ann_src = %s, superclass = %s, subclass = %s,
                              variant = %s, class_path = %s, cluster_rejected = %s,
                              ann_round = CASE WHEN %s IS NULL THEN NULL
@@ -837,8 +940,11 @@ def model_row(name=None):
 
 
 def model_rows():
-    return q("SELECT name, arch, dim, n_bytes, source_file, loaded_at FROM model_store "
-             "ORDER BY loaded_at DESC")
+    try:
+        return q("SELECT name, arch, dim, n_bytes, source_file, loaded_at FROM model_store "
+                 "ORDER BY loaded_at DESC")
+    except Exception:  # noqa: BLE001
+        return []
 
 
 def kind_samples():
@@ -933,10 +1039,12 @@ def ornaments_brief(oids):
 # ================================================================= places, pairs, links (§12)
 def design_place_rows(src, level, value):
     """(design, book_id, place_key, place) for the designs one level below
-    (src, level, value): subclasses of a superclass, variants of a subclass."""
-    if level == "superclass":
+    (src, level, value): subclasses of a superclass, variants of a subclass.
+    Only for sources that have those levels (v2.5: DI/FT raw codes excluded)."""
+    levels = config.SOURCES[src]["levels"]
+    if level == "superclass" and "subclass" in levels:
         grp, cond = "o.subclass", "o.ann_src = %(src)s AND o.superclass = %(v)s AND o.subclass IS NOT NULL"
-    elif level == "subclass":
+    elif level == "subclass" and "variant" in levels:
         grp, cond = "o.class_path", ("o.ann_src = %(src)s AND o.subclass = %(v)s AND o.variant <> ''"
                                      " AND o.class_path IS NOT NULL")
     else:
@@ -957,26 +1065,32 @@ def cluster_group_place_rows(src, values):
 
 def cluster_links(src, value, limit=12):
     """Related clusters of (src, value) by stored centroid similarity."""
-    return q("""
-        SELECT l.sim, l.rejected, CASE WHEN l.a = %(v)s THEN l.b ELSE l.a END AS other,
-               m.n, m.n_books, m.y0, m.y1, m.exemplar, m.kind
-        FROM cluster_link l
-        LEFT JOIN mv_class m ON m.src = l.src AND m.level = 'cluster'
-             AND m.value = CASE WHEN l.a = %(v)s THEN l.b ELSE l.a END
-        WHERE l.src = %(src)s AND (l.a = %(v)s OR l.b = %(v)s)
-        ORDER BY l.rejected, l.sim DESC LIMIT %(lim)s""", {"src": src, "v": value, "lim": limit})
+    try:
+        return q("""
+            SELECT l.sim, l.rejected, CASE WHEN l.a = %(v)s THEN l.b ELSE l.a END AS other,
+                   m.n, m.n_books, m.y0, m.y1, m.exemplar, m.kind
+            FROM cluster_link l
+            LEFT JOIN mv_class m ON m.src = l.src AND m.level = 'cluster'
+                 AND m.value = CASE WHEN l.a = %(v)s THEN l.b ELSE l.a END
+            WHERE l.src = %(src)s AND (l.a = %(v)s OR l.b = %(v)s)
+            ORDER BY l.rejected, l.sim DESC LIMIT %(lim)s""", {"src": src, "v": value, "lim": limit})
+    except Exception:  # noqa: BLE001 — no links table yet
+        return []
 
 
 def cluster_group(src, value, cap=None):
     """Connected component of accepted links around (src, value), capped."""
     cap = cap or config.LINK_MAX_GROUP
     seen, frontier = {value}, [value]
-    while frontier and len(seen) < cap:
-        rows = q("""SELECT CASE WHEN a = ANY(%(f)s) THEN b ELSE a END AS other
-                    FROM cluster_link WHERE src = %(src)s AND NOT rejected
-                      AND (a = ANY(%(f)s) OR b = ANY(%(f)s))""", {"src": src, "f": frontier})
-        frontier = [r["other"] for r in rows if r["other"] not in seen]
-        seen.update(frontier)
+    try:
+        while frontier and len(seen) < cap:
+            rows = q("""SELECT CASE WHEN a = ANY(%(f)s) THEN b ELSE a END AS other
+                        FROM cluster_link WHERE src = %(src)s AND NOT rejected
+                          AND (a = ANY(%(f)s) OR b = ANY(%(f)s))""", {"src": src, "f": frontier})
+            frontier = list({r["other"] for r in rows if r["other"] not in seen})
+            seen.update(frontier)
+    except Exception:  # noqa: BLE001
+        pass
     return sorted(seen, key=N.natural_key)
 
 
@@ -986,8 +1100,11 @@ def set_link_rejected(src, a, b, rejected):
 
 
 def link_stats():
-    return q("SELECT src, count(*) AS n, count(*) FILTER (WHERE rejected) AS n_rej, "
-             "max(computed_at) AS at FROM cluster_link GROUP BY src ORDER BY src")
+    try:
+        return q("SELECT src, count(*) AS n, count(*) FILTER (WHERE rejected) AS n_rej, "
+                 "max(computed_at) AS at FROM cluster_link GROUP BY src ORDER BY src")
+    except Exception:  # noqa: BLE001
+        return []
 
 
 def book_pairs(diff_only=True, limit=100, offset=0):
@@ -1008,8 +1125,9 @@ def pair_stats():
                 FROM mv_book_pair""", one=True)
 
 
-def shared_plates(pairs, per_pair=6):
-    """{(a, b): [plate rows]} for the pairs on one page."""
+def shared_plates(pairs, per_pair=None):
+    """{(a, b): [plate rows]} for the pairs on one page (rarest plates first)."""
+    per_pair = per_pair or config.PAIR_THUMBS
     out = {}
     for p in pairs:
         out[(p["a"], p["b"])] = q("""
@@ -1099,32 +1217,31 @@ def class_facets(src, level, value):
 
 
 def suggest_classes(term, limit=15):
-    """Class picker: 'C014', 'C014_02', 'mermaid', 'HP-8944' or '8944'."""
-    import re as _re
+    """Class picker: 'C014', 'C014_02', 'C014_02a', 'mermaid', 'HP-8944' or '8944'."""
     t = (term or "").strip()
     if not t:
         return []
     out = []
-    m = _re.fullmatch(r"(?i)(DI|FT|HP|TP)?[- ]?(\d+)", t)
+    m = re.fullmatch(r"(?i)(DI|FT|HP|TP)?[- ]?(\d+)", t)
     if m:
         kinds = [m.group(1).upper()] if m.group(1) else list(config.KINDS)
         srcs = [f"{k}-pred" for k in kinds if f"{k}-pred" in config.SOURCES]
         out += q("""SELECT src, level, value, n, n_books, NULL AS name FROM mv_class
                     WHERE level = 'cluster' AND src = ANY(%s) AND value = %s
                     ORDER BY n DESC LIMIT %s""", (srcs, m.group(2), limit))
-    like = t.lower() + "%"
-    out += q("""SELECT c.src, c.level, c.value, c.n, c.n_books, coalesce(cn.name, cs.name) AS name
+    esc = like_escape(t.lower())
+    out += q(f"""SELECT c.src, c.level, c.value, c.n, c.n_books, coalesce(cn.name, cs.name) AS name
                 FROM mv_class c
                 LEFT JOIN class_name cn ON cn.src = c.src AND cn.level = c.level AND cn.value = c.value
                 LEFT JOIN class_name cs ON cs.src = c.src AND cs.level = 'superclass'
                      AND cs.value = split_part(split_part(c.value, '/', 1), '_', 1)
                 WHERE c.level <> 'cluster' AND (lower(c.value) LIKE %(l)s
-                      OR lower(replace(c.value, '/', '')) LIKE %(l)s
+                      OR {_VARIANT_LABEL} LIKE %(l)s
                       OR lower(cn.name) LIKE %(w)s)
-                ORDER BY (lower(c.value) LIKE %(l)s) DESC,
+                ORDER BY (lower(c.value) LIKE %(l)s OR {_VARIANT_LABEL} LIKE %(l)s) DESC,
                          CASE c.level WHEN 'superclass' THEN 0 WHEN 'subclass' THEN 1 ELSE 2 END,
                          c.value LIMIT %(lim)s""",
-             {"l": like, "w": f"%{t.lower()}%", "lim": limit})
+             {"l": esc + "%", "w": f"%{esc}%", "lim": limit})
     seen, res = set(), []
     for r in out:
         k = (r["src"], r["level"], r["value"])

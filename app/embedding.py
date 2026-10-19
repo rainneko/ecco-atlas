@@ -1,10 +1,14 @@
 """Image search (DESIGN §9): embed an uploaded ornament with the project's own
 model and rank the atlas's classes by similarity.
 
-torch/timm are imported only inside the extractor, so the web app runs
-without them; the search page then explains that the model is not installed.
-With EMBED_FAKE=1 a deterministic random-projection "model" stands in for
-torch, which is how the pipeline is tested without a GPU library.
+v2.5: everything here is optional. With no embeddings loaded the engine says
+so and every caller degrades to a sentence (§9.0). The engine has two parts:
+the *index* (type samples, centroids — needs only stored vectors) and the
+*extractor* (needs torch and a stored model). Searching with an ornament that
+already has a stored vector needs only the index.
+
+torch/timm are imported only inside the extractor. With EMBED_FAKE=1 a
+deterministic random-projection "model" stands in for torch (tests).
 """
 from __future__ import annotations
 
@@ -14,7 +18,7 @@ import json
 import logging
 import threading
 import time
-from collections import Counter, defaultdict
+from collections import defaultdict
 
 import numpy as np
 from PIL import Image
@@ -40,17 +44,22 @@ def l2(v: np.ndarray) -> np.ndarray:
 
 
 # ---------------------------------------------------------------- preprocessing
-def crop_like_eval(im: Image.Image, size, crop="full") -> Image.Image:
-    """Query preprocessing, identical to how the stored vectors were made.
+def flatten_white(im: Image.Image) -> Image.Image:
+    """Transparent pixels become white paper, not black (v2.5)."""
+    if im.mode in ("RGBA", "LA") or (im.mode == "P" and "transparency" in im.info):
+        im = im.convert("RGBA")
+        bg = Image.new("RGBA", im.size, (255, 255, 255, 255))
+        im = Image.alpha_composite(bg, im)
+    return im.convert("RGB")
 
-    crop="full" (default): Resize(size) — the whole box stretched to `size`.
-    crop="square": the old research eval transform RandomResizedCrop(size,
-    scale=(1,1), ratio=(1,1)), which on a non-square image falls back to the
-    centre square (a 4:1 headpiece keeps its middle quarter). Kept only so that
-    vectors exported with the old transform can still be searched correctly;
-    the mode is recorded per type in embedding_model."""
+
+def crop_like_eval(im: Image.Image, size, crop="full") -> Image.Image:
+    """Query preprocessing, identical to how the stored vectors were made:
+    grayscale -> RGB repeat (the training scans are grayscale; v2.5 also turns
+    colour uploads grey), then Resize(size) ("full") or the old centre-square
+    crop ("square")."""
     h, w = size
-    im = im.convert("RGB")
+    im = flatten_white(im).convert("L").convert("RGB")
     if crop == "square" and im.width != im.height:
         s = min(im.width, im.height)
         i, j = (im.height - s) // 2, (im.width - s) // 2
@@ -65,8 +74,7 @@ def to_array(im: Image.Image) -> np.ndarray:
 
 # ---------------------------------------------------------------- extractors
 class FakeExtractor:
-    """Deterministic stand-in: random projection of a 32×32 grey thumbnail.
-    Same image → same vector; similar images → similar vectors."""
+    """Deterministic stand-in: random projection of a 32×32 grey thumbnail."""
     arch = "fake"
 
     def __init__(self, dim):
@@ -77,14 +85,13 @@ class FakeExtractor:
     def embed(self, im: Image.Image, size, crop="full") -> np.ndarray:
         x = crop_like_eval(im, size, crop).convert("L").resize((32, 32), Image.BILINEAR)
         px = np.asarray(x, dtype=np.float32).ravel() / 255.0
-        v = (px - px.mean()) @ self.P            # mean removed: background does not dominate
+        v = (px - px.mean()) @ self.P
         return l2(v)
 
 
 class TorchExtractor:
-    """The frozen backbone of docret.eval.backbones, rebuilt from the state
-    dict stored by `python -m etl.load_model`, with the same inference path as
-    docret.train.main.build_byol_backbone.BackboneWrapper."""
+    """The frozen backbone, rebuilt from the state dict stored by
+    `python -m etl.load_model`."""
 
     def __init__(self, arch: str, state: dict):
         import torch
@@ -104,9 +111,13 @@ class TorchExtractor:
         else:
             raise ValueError(f"unsupported architecture {arch!r}")
         missing, unexpected = net.load_state_dict(state, strict=False)
-        if missing or unexpected:
-            log.warning("model %s: %d missing, %d unexpected keys", arch, len(missing),
-                        len(unexpected))
+        if missing:
+            # v2.5: a wrong key prefix used to give a random network silently
+            raise RuntimeError(
+                f"stored model {arch} does not fit the backbone: {len(missing)} weights missing "
+                f"(e.g. {missing[:3]}). Reload it with python -m etl.load_model.")
+        if unexpected:
+            log.info("model %s: %d unused keys ignored (e.g. heads)", arch, len(unexpected))
         torch.set_num_threads(max(1, min(4, torch.get_num_threads())))
         self.net = net.eval()
 
@@ -133,8 +144,7 @@ def torch_available() -> bool:
 
 
 def class_level(src, value):
-    """(level, value-for-URL) of a centroid: clusters as they are; human plates
-    by the depth of their class path (C014 / C014_01 / C014_01a)."""
+    """(level, value-for-URL) of a centroid."""
     if config.SOURCES[src]["family"] == "pred":
         return "cluster", value
     parts = value.split("/")
@@ -145,35 +155,37 @@ def class_level(src, value):
     return "superclass", parts[0]
 
 
+NO_EMBEDDINGS = ("No embeddings have been loaded yet (python -m etl.load_model, then "
+                 "etl.load_embeddings).")
+
+
 # ---------------------------------------------------------------- engine
 class Engine:
-    """Holds the extractor and the in-memory matrices (type samples, centroids).
-    Everything loads lazily on first use or in `warmup()`; `reload()` picks up
-    a newly loaded model or embedding set."""
-
     def __init__(self):
         self.lock = threading.Lock()
         self.extractor = None
         self.model_name = None
         self.emb = None            # embedding_model row
-        self.sizes = {}            # kind -> {"size": (h, w), "crop": "square"}
+        self.sizes = {}            # kind -> {"size": (h, w), "crop": "full"}
         self.samples = {}          # kind -> (matrix, oids)
         self.centroids = {}        # kind -> (matrix, rows)
         self.full = {}             # kind -> (matrix, oids) when EMBED_INDEX=full
-        self.loaded_at = None
+        self.index_at = None       # embedding_model.loaded_at of the loaded index
+        self.loaded_at = None      # ... of the index the extractor was checked against
         self.error = None
         self.timings = {"embed": [], "match": []}
         self._loading = False
+        self._last_try = 0.0
 
     # ---- status
     def status(self):
-        # not ready yet: retry in the background at most every 30 s, so that
-        # tables or embeddings loaded after start-up are picked up (§9.4)
-        if self.extractor is None and not self._loading and \
-                time.time() - getattr(self, "_last_try", 0) > 30:
+        if (self.extractor is None or self.index_at is None) and not self._loading and \
+                time.time() - self._last_try > 30:
             self._last_try = time.time()
             self.warmup()
-        return dict(model_loaded=self.extractor is not None, loading=self._loading,
+        return dict(model_loaded=self.extractor is not None,
+                    index_ready=self.index_at is not None,
+                    loading=self._loading,
                     model=self.model_name, dim=self.emb["dim"] if self.emb else None,
                     n_vectors=self.emb["n"] if self.emb else 0, error=self.error,
                     expected_ms={k: self.expected_ms(k) for k in ("embed", "match")},
@@ -198,31 +210,62 @@ class Engine:
         except Exception as e:  # noqa: BLE001
             msg = str(e)
             if "does not exist" in msg and "relation" in msg:
-                msg = ("No embeddings have been loaded yet (run python -m etl.load, then "
-                       "etl.load_model and etl.load_embeddings).")
+                msg = NO_EMBEDDINGS
             self.error = msg
-            log.warning("image search unavailable: %s", msg.splitlines()[0])
+            log.info("image search unavailable: %s", msg.splitlines()[0])
+
+    def _ensure_index_locked(self):
+        emb = db.embedding_model()
+        if emb is None or not emb.get("n"):
+            self.error = NO_EMBEDDINGS
+            self.index_at = None
+            return False
+        if self.index_at == emb["loaded_at"]:
+            return True
+        t = time.time()
+        self.emb = emb
+        self.sizes = {k: dict(size=tuple(v.get("size", config.EMBED_INPUT.get(k, (200, 200)))),
+                              crop=v.get("crop", config.EMBED_CROP))
+                      for k, v in (emb.get("input_sizes") or {}).items()}
+        for k in config.KINDS:
+            self.sizes.setdefault(k, dict(size=config.EMBED_INPUT.get(k, (200, 200)),
+                                          crop=config.EMBED_CROP))
+        self.samples = {k: (np.stack([decode(v) for v in vecs]) if vecs else None, oids)
+                        for k, (vecs, oids) in db.kind_samples().items()}
+        self.centroids = {}
+        for k, rows in db.centroids_by_kind().items():
+            self.centroids[k] = (np.stack([decode(r["vec"]) for r in rows]), rows)
+        self.full = {}
+        if config.EMBED_INDEX == "full":
+            for k in config.KINDS:
+                oids, vecs = db.all_embeddings(k)
+                if oids:
+                    self.full[k] = (np.stack([decode(v) for v in vecs]), oids)
+        self.index_at = emb["loaded_at"]
+        log.info("embedding index ready: %d vectors, %d centroids, %.1fs", emb["n"],
+                 sum(len(r) for _, r in self.centroids.values()), time.time() - t)
+        return True
+
+    def ensure_index(self):
+        """Samples and centroids only; enough to search with a stored vector."""
+        with self.lock:
+            try:
+                return self._ensure_index_locked()
+            except Exception as e:  # noqa: BLE001
+                self.error = NO_EMBEDDINGS if "does not exist" in str(e) else str(e)
+                return False
 
     def ensure_loaded(self):
+        """Index and extractor; needed to embed a new image."""
         with self.lock:
-            emb = db.embedding_model()
-            if emb is None:
-                self.error = "No embeddings have been loaded (python -m etl.load_embeddings)."
+            if not self._ensure_index_locked():
                 return False
-            if self.extractor is not None and self.loaded_at == emb["loaded_at"]:
+            if self.extractor is not None and self.loaded_at == self.index_at:
                 return True
             self._loading = True
             try:
-                t = time.time()
-                self.emb = emb
-                self.sizes = {k: dict(size=tuple(v.get("size", config.EMBED_INPUT.get(k, (200, 200)))),
-                                      crop=v.get("crop", config.EMBED_CROP))
-                              for k, v in (emb.get("input_sizes") or {}).items()}
-                for k in config.KINDS:
-                    self.sizes.setdefault(k, dict(size=config.EMBED_INPUT.get(k, (200, 200)),
-                                                  crop=config.EMBED_CROP))
                 if config.EMBED_FAKE:
-                    self.extractor, self.model_name = FakeExtractor(emb["dim"]), "fake"
+                    self.extractor, self.model_name = FakeExtractor(self.emb["dim"]), "fake"
                 else:
                     row = db.model_row(config.EMBED_MODEL or None)
                     if row is None:
@@ -231,37 +274,22 @@ class Engine:
                         raise RuntimeError("torch/timm are not installed in this image.")
                     import torch
                     state = torch.load(io.BytesIO(bytes(row["state"])), map_location="cpu")
-                    self.extractor = TorchExtractor(row["arch"], state)
-                    self.model_name = row["name"]
-                    if self.extractor.dim != emb["dim"]:
+                    ext = TorchExtractor(row["arch"], state)
+                    if ext.dim != self.emb["dim"]:
                         raise RuntimeError(
-                            f"model {row['name']} outputs {self.extractor.dim}-d vectors but the "
-                            f"loaded embeddings are {emb['dim']}-d ({emb['name']}). Reload one "
-                            f"of them.")
-                self.samples = {k: (np.stack([decode(v) for v in vecs]) if vecs else None, oids)
-                                for k, (vecs, oids) in db.kind_samples().items()}
-                self.centroids = {}
-                for k, rows in db.centroids_by_kind().items():
-                    self.centroids[k] = (np.stack([decode(r["vec"]) for r in rows]), rows)
-                self.full = {}
-                if config.EMBED_INDEX == "full":
-                    for k in config.KINDS:
-                        oids, vecs = db.all_embeddings(k)
-                        if oids:
-                            self.full[k] = (np.stack([decode(v) for v in vecs]), oids)
-                self.loaded_at = emb["loaded_at"]
+                            f"model {row['name']} outputs {ext.dim}-d vectors but the loaded "
+                            f"embeddings are {self.emb['dim']}-d ({self.emb['name']}). "
+                            f"Reload one of them.")
+                    self.extractor, self.model_name = ext, row["name"]
+                self.loaded_at = self.index_at
                 self.error = None
-                log.info("image search ready: model %s, %d vectors, %d centroids, %.1fs",
-                         self.model_name, emb["n"],
-                         sum(len(r) for _, r in self.centroids.values()), time.time() - t)
+                log.info("image search ready: model %s", self.model_name)
                 return True
             finally:
                 self._loading = False
 
     # ---- query
     def embed_all(self, im: Image.Image) -> dict:
-        """One vector per distinct preprocessing (kinds sharing a size share a
-        pass). Returns {kind: vec}."""
         if not self.ensure_loaded():
             raise RuntimeError(self.error or "image search is not ready")
         t = time.time()
@@ -275,7 +303,6 @@ class Engine:
         return out
 
     def kind_scores(self, vecs: dict) -> dict:
-        """{kind: mean similarity of the KIND_KNN nearest type samples}."""
         scores = {}
         for k, v in vecs.items():
             M, _ = self.samples.get(k, (None, None))
@@ -292,10 +319,14 @@ class Engine:
         cands = []
         if M is not None and len(rows):
             sims = M @ vec
-            for fam in ("pred", "ann"):
-                idx = [i for i, r in enumerate(rows) if config.SOURCES[r["src"]]["family"] == fam]
-                idx.sort(key=lambda i: -sims[i])
-                for i in idx[:top]:
+            fam = np.array([config.SOURCES[r["src"]]["family"] == "pred" for r in rows])
+            for want in (True, False):
+                idx = np.nonzero(fam == want)[0]
+                if not len(idx):
+                    continue
+                k = min(top, len(idx))
+                best = idx[np.argpartition(-sims[idx], k - 1)[:k]]
+                for i in best[np.argsort(-sims[best])]:
                     r = rows[i]
                     level, uvalue = class_level(r["src"], r["value"])
                     cands.append(dict(src=r["src"], value=uvalue, path=r["value"], kind=r["kind"],
@@ -303,7 +334,6 @@ class Engine:
                                       n_books=r["n_books"], y0=r["y0"], y1=r["y1"],
                                       exemplar=r["exemplar"], t_owned=bool(r["t_owned"]),
                                       centroid_sim=float(sims[i])))
-        # exact pass on the members of the candidate classes
         members = db.members_with_vectors([(c["src"], c["path"]) for c in cands])
         images = []
         for c in cands:
@@ -312,13 +342,12 @@ class Engine:
                 V = np.stack([decode(m["vec"]) for m in ms])
                 s = V @ vec
                 c["max"], c["mean"] = float(s.max()), float(s.mean())
-                j = int(s.argmax())
-                c["best_oid"] = ms[j]["oid"]
+                c["best_oid"] = ms[int(s.argmax())]["oid"]
                 for m, si in zip(ms, s):
                     images.append(dict(oid=m["oid"], sim=float(si), src=c["src"], value=c["path"]))
             else:
                 c["max"], c["mean"], c["best_oid"] = c["centroid_sim"], c["centroid_sim"], None
-        if kind in self.full:                            # exhaustive: every vector of the type
+        if kind in self.full:
             F, oids = self.full[kind]
             s = F @ vec
             for j in np.argsort(-s)[:60]:
@@ -330,12 +359,10 @@ class Engine:
         cands.sort(key=lambda c: -c["max"])
         houses = self.house_estimate(cands)
         self._record("match", (time.time() - t) * 1000)
-        return dict(classes=cands, images=uniq[:12], houses=houses)
+        return dict(classes=cands, images=uniq[:13], houses=houses)
 
     def house_estimate(self, cands):
-        """Similarity-weighted coverage shares of the houses behind the top
-        classes (DESIGN §9.4 step 6)."""
-        voting = [c for c in cands if c["max"] >= config.MATCH_MIN_SIM][:10]
+        voting = [c for c in cands if c["max"] > config.MATCH_MIN_SIM][:10]
         if not voting:
             return dict(publisher=[], printer=[], n_classes=0)
         plates = [c["plate"] for c in voting if c.get("plate")]
@@ -352,12 +379,35 @@ class Engine:
         for role, d in acc.items():
             items = sorted(d.items(), key=lambda kv: -kv[1])[:8]
             out[role] = [dict(name=names[a]["name"], display=names[a]["display_name"],
-                              p=v / wsum) for a, v in items]
+                              p=v / wsum) for a, v in items] if wsum else []
         out["n_classes"] = len(voting)
         return out
 
 
 engine = Engine()
+
+
+def similar_to_ornament(oid, kind, k=3):
+    """Nearest ornaments by stored vector (ornament page, 'Embedding' tab).
+    Returns [] when anything is missing; never raises."""
+    try:
+        blob = db.ornament_vector(oid)
+        if blob is None or not engine.ensure_index():
+            return []
+        res = engine.match(decode(blob), kind)
+        hits = [i for i in res["images"] if i["oid"] != oid][:k]
+        brief = db.ornaments_brief([h["oid"] for h in hits])
+        out = []
+        for h in hits:
+            b = brief.get(h["oid"], {})
+            out.append(dict(oid=h["oid"], label=b.get("label"), kind=b.get("kind"),
+                            book_id=b.get("book_id"), year=b.get("year"),
+                            full_title=b.get("full_title"), score=h["sim"],
+                            reason="image embedding"))
+        return out
+    except Exception as e:  # noqa: BLE001
+        log.warning("embedding similarity failed for %s: %s", oid, e)
+        return []
 
 
 # ---------------------------------------------------------------- queries on disk
@@ -373,8 +423,10 @@ def new_token(data: bytes) -> str:
 
 def save_query_image(data: bytes) -> tuple[str, Image.Image]:
     im = Image.open(io.BytesIO(data))
+    if im.width * im.height > config.QUERY_MAX_PIXELS:      # before decoding (v2.5)
+        raise ValueError("image has too many pixels")
     im.load()
-    im = im.convert("RGB")
+    im = flatten_white(im)
     if max(im.size) > config.QUERY_MAX_SIDE:
         im.thumbnail((config.QUERY_MAX_SIDE, config.QUERY_MAX_SIDE), Image.LANCZOS)
     tok = new_token(data)

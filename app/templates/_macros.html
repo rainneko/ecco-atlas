@@ -5,6 +5,8 @@
 {% macro kdot(kind) %}<i class="dot" style="background:{{ KIND_COLOR.get(kind, '#888') }}" title="{{ KIND_LABEL.get(kind, kind) }}"></i>{% endmacro %}
 
 {% macro srcboxes(avail, sel, button='Update') %}
+<details class="srcfold" {{ 'open' if sel|length != avail|length }}>
+  <summary>Data: {% if sel|length == avail|length %}all {{ avail|length }} sources{% else %}{{ sel|length }} of {{ avail|length }} sources{% endif %} <span class="muted">· change</span></summary>
 <fieldset class="srcbox">
   <legend>Data included</legend>
   <input type="hidden" name="srcset" value="1">
@@ -19,6 +21,7 @@
     <button class="quiet">{{ button }}</button></div>
   {% if not sel %}<p class="flash err">Tick at least one source.</p>{% endif %}
 </fieldset>
+</details>
 {% endmacro %}
 
 {% macro pagerbar(pager, page_no, base) %}
@@ -69,31 +72,52 @@
 {% macro plate_thumb(p, share=None) %}
 <figure class="thumb">
   <a href="{{ plate_url(p.plate) }}"><img loading="lazy" src="{{ crop_url(p.exemplar) }}" alt="{{ plate_label(p.plate) }}"></a>
-  {% if share is not none %}<div class="bar" title="this house appears in {{ pct(share) }} of the plate's books"><i style="width:{{ (100 * share)|round(1) }}%"></i></div>{% endif %}
+  {% if share is not none %}<div class="bar" title="this house is named in {{ pct(share) }} of the block's books"><i style="width:{{ (100 * share)|round(1) }}%"></i></div>{% endif %}
   <figcaption>{{ kdot(p.kind) }}<b>{{ plate_label(p.plate) }}</b>
-    {% if p.t_owned %}<span class="tag t-own" title="Tonson or Watts hold the largest share of this plate">T</span>{% endif %}<br>
+    {% if p.t_owned %}<span class="tag t-own" title="Tonson or Watts are named most often in this block's books">T</span>{% endif %}<br>
     <span class="muted">{{ p.n_books }} book{{ '' if p.n_books == 1 else 's' }}, {{ p.y0 or '?' }}–{{ p.y1 or '?' }}</span>
   </figcaption>
 </figure>
 {% endmacro %}
 
-{% macro mix(items, owners, borrowers, n_known, menus=None) %}
+{# v2.5: one bar per house, length = share of books; replaces the stacked credit bar #}
+{% macro hbars(items, n_den, what, owners, borrowers, menus=None, top=8) %}
 {% if items %}
-<div class="mixbar" role="img" aria-label="credit share">
-  {% for m in items %}<span style="width:{{ (m.credit * 100)|round(2) }}%" data-i="{{ loop.index0 % 8 }}"
-    title="{{ m.display }}: {{ m.n }} books"></span>{% endfor %}
-</div>
-<ol class="mixlist">
-  {% for m in items[:10] %}
-  <li><i class="sw" data-i="{{ loop.index0 % 8 }}"></i>
-    {% if menus and menus.get(m.agent_id) %}{{ menulink(menus[m.agent_id], m.display) }}{% else %}<a href="/agent/{{ m.name }}">{{ m.display }}</a>{% endif %}
-    {% if m.agent_id in owners %}<span class="role owner">owner</span>{% elif m.agent_id in borrowers %}<span class="role borrower">borrower?</span>{% endif %}
-    <span class="n">{{ pct(m.coverage) }}<small>{{ m.n }} of {{ n_known }}</small></span></li>
+<p class="note">{{ n_den }} book{{ '' if n_den == 1 else 's' }} name a {{ what }}.</p>
+<ol class="hbars">
+  {% for m in items[:top] %}
+  <li class="{{ 'main' if m.agent_id in owners }}">
+    <span class="hb-name">{% if menus and menus.get(m.agent_id) %}{{ menulink(menus[m.agent_id], m.display) }}{% else %}<a href="/agent/{{ m.name }}">{{ m.display }}</a>{% endif %}
+      {% if m.agent_id in owners %}<span class="role owner">main house</span>{% elif m.agent_id in borrowers %}<span class="role borrower">other house</span>{% endif %}</span>
+    <span class="hb-bar" title="{{ m.n }} of {{ n_den }} books"><i style="width:{{ (100 * m.coverage)|round(1) }}%"></i></span>
+    <span class="hb-n">{{ pct(m.coverage) }} <small>{{ m.n }}</small></span>
+  </li>
   {% endfor %}
 </ol>
-{% if items|length > 10 %}<p class="note">and {{ items|length - 10 }} more</p>{% endif %}
-{% else %}<p class="muted small">No imprint data for these books.</p>{% endif %}
+{% if items|length > top %}<p class="note">and {{ items|length - top }} more house{{ '' if items|length - top == 1 else 's' }}, each in {{ pct(items[top].coverage) }} of these books or fewer.</p>{% endif %}
+{% else %}<p class="muted small">No {{ what }} is named in these books.</p>{% endif %}
 {% endmacro %}
+
+{# v2.5: houses through time (DESIGN §5.6) #}
+{% macro swimlane(s) %}
+{% if s %}
+<div class="swimwrap">
+<svg class="swim" viewBox="0 0 1000 {{ s.height }}" role="img" aria-label="Books of this class by house and year">
+  {% if s.band %}<rect class="sw-band" x="{{ s.band[0] }}" y="{{ s.top }}" width="{{ s.band[1] }}" height="{{ s.bottom - s.top }}"><title>Years in which the main house used it</title></rect>{% endif %}
+  {% for x, t in s.ticks %}<line class="sw-grid" x1="{{ x }}" x2="{{ x }}" y1="{{ s.top }}" y2="{{ s.bottom }}"/><text class="sw-tick" x="{{ x }}" y="{{ s.bottom + 17 }}" text-anchor="middle">{{ t }}</text>{% endfor %}
+  {% for l in s.lanes %}
+  <text class="sw-name {{ 'main' if l.main }}" x="{{ s.L - 10 }}" y="{{ l.y + 4 }}" text-anchor="end">{{ l.display[:24] }} ({{ l.n }})</text>
+  <line class="sw-lane" x1="{{ s.L }}" x2="{{ s.R }}" y1="{{ l.y }}" y2="{{ l.y }}"/>
+  {% for d in l.dots %}<a href="{{ d.href }}"><circle class="sw-dot {{ 'hollow' if d.hollow }} {{ 'main' if l.main }}" cx="{{ d.x }}" cy="{{ l.y }}" r="5"><title>{{ d.title }}</title></circle></a>{% endfor %}
+  {% endfor %}
+</svg>
+</div>
+<p class="note">One dot per book{% if s.band %}; the pale band is the main house's dated use; a hollow dot is a book that does not name the main house{% endif %}.{% if s.more %} {{ s.more }} more house{{ '' if s.more == 1 else 's' }} not shown.{% endif %}{% if s.n_undated %} {{ s.n_undated }} undated book{{ '' if s.n_undated == 1 else 's' }} not shown.{% endif %}</p>
+{% endif %}
+{% endmacro %}
+
+{# kept for other pages; the class page uses hbars since v2.5 #}
+{% macro mix(items, owners, borrowers, n_known, menus=None) %}{{ hbars(items, n_known, 'house', owners, borrowers, menus) }}{% endmacro %}
 
 {% macro pie(slices, menus, total) %}
 <div class="pie">

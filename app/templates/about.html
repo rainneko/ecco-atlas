@@ -13,7 +13,7 @@
         <li><a href="#illustrations">Not in the atlas</a></li>
         <li><a href="#classes">Classes and clusters</a></li>
         <li><a href="#shares">Shares</a></li>
-        <li><a href="#lending">Ownership and lending</a></li>
+        <li><a href="#lending">Main houses and unusual imprints</a></li>
         <li><a href="#imprint">Imprints and houses</a></li>
         <li><a href="#places">Places</a></li>
         <li><a href="#search">Similarity</a></li>
@@ -28,10 +28,11 @@
 </nav>
 <div class="aboutmain">
 <h1>About the atlas</h1>
-<p class="lead">{{ cfg.SCOPE_SENTENCE }} The atlas is the working instrument of a research project on how ornaments moved between the printing and publishing houses of the eighteenth century. It holds {{ "{:,}".format(summary.n_ornaments or 0) }} ornaments in {{ "{:,}".format(summary.n_books or 0) }} books, printed {{ summary.year_min or '?' }}–{{ summary.year_max or '?' }}.</p>
+<p class="lead">{{ cfg.SCOPE_SENTENCE }} The atlas is the working instrument of a research project on the reuse of ornaments in eighteenth-century printing and publishing. It holds {{ "{:,}".format(summary.n_ornaments or 0) }} ornaments in {{ "{:,}".format(summary.n_books or 0) }} books, printed {{ summary.year_min or '?' }}–{{ summary.year_max or '?' }}.</p>
 
 <h2 id="assumption">The assumption everything rests on</h2>
-<div class="assumption">An ornament block was a physical asset of a printing or publishing house. It was cut once, cost money, was added to the book by the printer, and was used again and again until it wore out, was lent, sold or inherited. Two books printed from the same block are therefore linked through the trade, not through their contents. Illustrations are different: a woodcut of a battle belongs to the book it illustrates, and its reuse tells us about the text, not the house. That is why the atlas contains printers' ornaments and initials, and no illustrations.</div>
+<div class="assumption">An ornament block was a physical object, usually of the printing house. It was cut once, cost money, was added to the book by the printer, and was used again and again until it wore out, was sold, inherited or copied. Two books printed from the same block are therefore linked through the trade, not through their contents. Illustrations are different: a woodcut of a battle belongs to the book it illustrates, and its reuse tells us about the text, not the house. That is why the atlas contains printers' ornaments and initials, and no illustrations.</div>
+<p>The atlas sees blocks through <b>imprints</b>: the names on the title page, as ESTC records them. Imprints usually name the booksellers first and often do not name the printer at all, and some names on title pages were those of trade publishers, who lent their names to books printed for others. Every statement on this site about "a house and its blocks" is therefore a statement about imprints, not about who owned a block.</p>
 
 <h2 id="glossary">What is in the atlas</h2>
 <div class="glossary">
@@ -53,32 +54,33 @@
   <dt>Other illustration</dt><dd>Illustrations that are not clearly a woodcut or engraving: mathematical diagrams, music, maps.</dd>
   <dt>Library stamp</dt><dd>A modern stamp from a library.</dd>
 </dl>
-<h3 id="classes">Classes, plates and clusters</h3>
+<h3 id="classes">Classes, blocks and clusters</h3>
 <dl>
   <dt id="term-superclass">Superclass</dt><dd>Designs that share a motif, e.g. C067. The codes follow the paper: CXXX is the main class. A superclass usually holds several blocks, so it is never treated as one.</dd>
   <dt id="term-subclass">Subclass and variant</dt><dd>A <b>subclass</b> (C067_01) is one design; a <b>variant</b> (C067_01a) is what we take to be one physical block of it. Decorative initials and factotums are annotated at superclass level only.</dd>
-  <dt id="term-plate">Plate</dt><dd>The level treated as one block in every analysis of who used what: a human variant, or one machine cluster.</dd>
+  <dt id="term-plate">Block (plate)</dt><dd>The level treated as one physical block in every analysis of who used what: a human variant, or one machine cluster. The code and the addresses of the site call it a "plate".</dd>
   <dt id="term-cluster">Cluster</dt><dd>A group of images the model judged to come from the same design (HP-8944). Clusters are machine output and have not been checked by a person; an image with a human label is never counted under its cluster as well, so nothing is counted twice.</dd>
 </dl>
 <h3 id="shares">Shares</h3>
 <dl>
-  <dt id="term-coverage">Coverage</dt><dd>The share of a plate's books, among those with a known imprint, that name a house. A book can name several houses, so coverages can add up to more than 100%.</dd>
-  <dt id="term-credit">Credit</dt><dd>A house's share of all imprint credits of a class; the bar on a class page adds up to 100%.</dd>
+  <dt id="term-coverage">Coverage</dt><dd>The share of books that name a house. On a class page publishers and printers each have their own count: the share of the books that name a publisher, and the share of the books that name a printer (most books name no printer). A book can name several houses, so coverages can add up to more than 100%.</dd>
+  <dt id="term-credit">Credit</dt><dd>A house's share of all names on the imprints of a class, adding up to 100%. Earlier versions drew it as a stacked bar; it hid the largest house when the books name many booksellers, so it is no longer drawn.</dd>
 </dl>
-<h3 id="lending">Ownership and lending</h3>
+<h3 id="lending">Main houses and unusual imprints</h3>
 <dl>
-  <dt id="term-owner">Owner</dt><dd>The house named in at least the owner share (default 70%) of a plate's books with a known imprint, on plates with at least five such books.</dd>
-  <dt id="term-borrower">Borrower</dt><dd>A house named in only a few of the plate's books (default 5–20%), and never in a book that also names the owner. A borrower's book inside the owner's years of use suggests a loan; one long after suggests a sale or transfer.</dd>
+  <dt id="term-owner">Main house</dt><dd>The house named in at least a set share (default 70%) of a block's books that name a house, on blocks with at least five such books. Publishers and printers are counted together here, because the imprint does not say who held the block. A main house is an association in imprints, not proof that the house owned the block.</dd>
+  <dt id="term-borrower">Other house</dt><dd>A house named in only a few of a block's books (default 5–20%), and never in a book that also names the main house. The <a href="/lending">unusual-imprints page</a> lists these books. It does not say why they exist. The usual explanations are: a trade publisher's name on the title page; the same printer working for another bookseller; a later sale of stock; a reissue of old sheets with a new title page; a copied block; or an error in the data.</dd>
+  <dt id="term-timeline">Houses through time</dt><dd>On a class page, one row per house and one dot per book, placed by year. The pale band is the period in which the main house's books are dated. A hollow dot is a book that does not name the main house.</dd>
 </dl>
 <h3 id="imprint">Imprints and houses</h3>
 <dl>
   <dt id="term-imprint">Imprint</dt><dd>The publisher and printer statement of the title page as transcribed in ESTC. Names are reduced to a surname key, so "Tonson, J.", "Tonson, Jacob" and "J. and R. Tonson" are one house. The price is that two people with one surname are merged.</dd>
-  <dt id="term-T">The T tag</dt><dd>Marks a book whose imprint names Tonson or Watts, or a plate whose largest holder is Tonson or Watts. The Tonson–Watts enterprise is the case study of the research.</dd>
+  <dt id="term-T">The T tag</dt><dd>Marks a book whose imprint names Tonson or Watts, or a block whose books name Tonson or Watts most often. The Tonson–Watts enterprise is the case study of the research.</dd>
 </dl>
 <h3 id="places">Places</h3>
 <dl>
   <dt id="term-place_share">Where it was printed</dt><dd>The city of publication from the ESTC record. Each book has one place, so on a class page the places are drawn as a pie whose slices add up to 100%. Books whose place ESTC does not know are left out and counted underneath. Clicking a place offers a side-by-side comparison of that place's images with those of the main place. ESTC's false imprints (a Paris book claiming London) are marked on the book page.</dd>
-  <dt id="term-contrast">Contrast</dt><dd>How differently two designs of one superclass are spread over cities, from 0 (the same cities in the same proportions) to 1 (no city in common); technically the total-variation distance between the two place distributions. Two variants of a design printed in different cities point to a copy rather than a lent block.</dd>
+  <dt id="term-contrast">Contrast</dt><dd>How differently two designs of one superclass are spread over cities, from 0 (the same cities in the same proportions) to 1 (no city in common); technically the total-variation distance between the two place distributions. Two variants of a design printed in different cities point to a copy rather than a shared block.</dd>
 </dl>
 <h3 id="search">Similarity</h3>
 <dl>
@@ -99,14 +101,14 @@
 <dl>
   <dt>The catalogues of single printers were incomplete.</dt>
   <dd>Earlier bibliographies list the ornaments of one printer — Bowyer, Richardson, Woodfall — from the books he is known to have printed. Matched against those lists, the clusters found on average more books per ornament (Woodfall: 9 in the bibliography, 34 here) and longer lives (Woodfall: 9 years there, 24 here; all headpieces here: 23 years). Ornaments travelled further than one printer's stock.</dd>
-  <dt>Blocks changed hands across the Irish Sea.</dt>
-  <dd>Three ornaments used by William Bowyer in London appear, identical, in George Faulkner's Dublin books — Faulkner had worked for Bowyer until 1729. One of them (<a href="/classes?tax=HP-ann:subclass&amp;q=C127">C127_01</a>) is recorded 50 times between 1710 and 1786: London until the early 1720s, Dublin after 1733. This is what the <a href="/lending">lending</a> page looks for at scale.</dd>
+  <dt>The same blocks appear on both sides of the Irish Sea.</dt>
+  <dd>Three ornaments used by William Bowyer in London appear, identical, in George Faulkner's Dublin books — Faulkner had worked for Bowyer until 1729. One of them (<a href="/classes?tax=HP-ann:subclass&amp;q=C127">C127_01</a>) is recorded 50 times between 1710 and 1786: London until the early 1720s, Dublin after 1733. The <a href="/lending">unusual-imprints page</a> lists candidate cases of this kind for all blocks; why each case happened is for the reader to judge.</dd>
   <dt>Variants are the interesting cases.</dt>
   <dd>The Tonson–Watts house used designs in London whose near-identical variants turn up in Dublin — over twenty Irish examples across three decades, for instance <a href="/classes?tax=HP-ann:superclass&amp;q=C002">C002</a>, where the London block has the birds facing away from the central head and the Dublin block has them facing in. Consistent use over decades suggests something more deliberate than piracy; the atlas keeps such variants as separate blocks of one design so the question can be studied.</dd>
   <dt>Dublin reprints did not usually copy London ornaments.</dt>
   <dd>Across editions of the same work, Dublin editions rarely reproduce the images of the London original. The exceptions stand out: John Laurence's <i>A New System of Agriculture</i> (London 1726, Dublin 1727) copies the London headpieces closely. The place analysis of the atlas is built to find such pairs.</dd>
   <dt>Things to be careful about.</dt>
-  <dd>Two images that look identical in ECCO's scans can still be two blocks; reissues of unsold sheets are not reuse; false imprints (a Paris book claiming London) are flagged in ESTC and are marked here where the place data has them.</dd>
+  <dd>Two images that look identical in ECCO's scans can still be two blocks; reissues of unsold sheets are not reuse; a name on a title page is not always the house that held the block; false imprints (a Paris book claiming London) are flagged in ESTC and are marked here where the place data has them.</dd>
 </dl>
 </div>
 

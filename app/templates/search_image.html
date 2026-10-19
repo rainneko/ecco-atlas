@@ -5,9 +5,15 @@
 <h1>Image search</h1>
 <p class="lead">Upload a picture of an ornament — a crop from a page scan, a photograph, a screenshot — and the atlas says what type it is, which classes it most resembles and which houses those classes point to. The comparison uses the project's own image model {{ help('similarity') }}.</p>
 
+{% set ready = status.index_ready or status.model_loaded or status.loading %}
+{% if not ready %}
+{# v2.5 (DESIGN §9.0): no embeddings loaded yet — say so instead of showing a form that cannot work #}
+<p class="flash err">Image search is not available yet: no image embeddings have been loaded into the atlas. The rest of the site works as usual.</p>
+<p class="note">For the team: load the model with <code>python -m etl.load_model</code> and the vectors with <code>python -m etl.load_embeddings</code>. This page picks them up within a minute, without a restart.</p>
+{% else %}
 {% if not status.torch and not status.model_loaded %}
-<p class="flash err">Image search is not available on this server: the image model library is not installed. {{ status.error or '' }}</p>
-{% elif status.error %}
+<p class="flash err">Uploads are not available on this server: the image model library is not installed. {{ status.error or '' }}</p>
+{% elif status.error and not status.model_loaded %}
 <p class="flash err">Image search is not ready: {{ status.error }}</p>
 {% endif %}
 
@@ -17,7 +23,7 @@
   <div class="drop" id="drop" tabindex="0">
     <input type="file" id="file" accept="image/jpeg,image/png,image/tiff,image/webp" hidden>
     <p><b>Drop an image here</b> or <button type="button" class="ghost" id="pick">choose a file</button></p>
-    <p class="note">JPEG, PNG, TIFF or WebP, up to 8 MB. Crop to the ornament if you can; a bit of margin does not matter.</p>
+    <p class="note">JPEG, PNG, TIFF or WebP, up to 8 MB. Crop to the ornament if you can; a bit of margin does not matter. Colour images are compared in grey, as the scans are.</p>
   </div>
 
   <div class="progress" id="progress" hidden>
@@ -46,5 +52,6 @@
 </div>
 
 <p class="note" style="margin-top:28px">Your image is kept on the server for 24 hours so that the result page can be revisited or shared; it is not added to the atlas. Nothing is sent anywhere else.</p>
+{% endif %}
 {% endblock %}
 {% block scripts %}<script src="/static/search.js?v={{ asset_v }}"></script>{% endblock %}

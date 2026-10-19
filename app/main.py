@@ -1,11 +1,17 @@
 from __future__ import annotations
 
+import asyncio
 import csv
+import hashlib
+import hmac
 import io
 import logging
 import math
-from pathlib import Path
+import re
+import time
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
+from pathlib import Path
 from urllib.parse import quote, urlencode
 
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
@@ -15,6 +21,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from itsdangerous import BadSignature, URLSafeTimedSerializer
 from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.middleware.gzip import GZipMiddleware
 
 from . import compare, config, db, derived, embedding, imaging, lending, places, workbench
 from . import normalize as N
@@ -23,33 +30,50 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 log = logging.getLogger("ecco")
 STATIC = config.BASE_DIR / "static"
 
+# Image routes run on their own small pool, so pages never wait for images (DESIGN §6).
+_img_pool = ThreadPoolExecutor(max_workers=max(2, config.IMAGE_MAX_PARALLEL + 3),
+                               thread_name_prefix="img")
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     db.init_pool()
+    db.ensure_runtime_schema()
     try:
         config.CACHE_DIR.mkdir(parents=True, exist_ok=True)
     except OSError:
         log.warning("cache dir %s not writable; crops will be refetched", config.CACHE_DIR)
-    log.info("started; image_base=%s cache=%s (%d items)", config.IMAGE_BASE,
-             config.CACHE_DIR, config.CACHE_MAX_ITEMS)
-    embedding.engine.warmup()          # loads the model in the background (§9.1)
+    log.info("started; image_base=%s cache=%s (%d items), downloads ≤%d at a time, ≤%.1f/s",
+             config.IMAGE_BASE, config.CACHE_DIR, config.CACHE_MAX_ITEMS,
+             config.IMAGE_MAX_PARALLEL, config.IMAGE_MAX_RPS)
+    embedding.engine.warmup()          # background; harmless when nothing is loaded (§9.0)
     yield
     db.close_pool()
 
 
-from starlette.middleware.gzip import GZipMiddleware  # noqa: E402
+class SelectiveGZip:
+    """gzip everything except /img/ (JPEG does not shrink; v2.5)."""
+
+    def __init__(self, app, minimum_size=1000):
+        self.app = app
+        self.gz = GZipMiddleware(app, minimum_size=minimum_size)
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http" and scope.get("path", "").startswith("/img/"):
+            return await self.app(scope, receive, send)
+        return await self.gz(scope, receive, send)
+
 
 app = FastAPI(title=config.SITE_TITLE, lifespan=lifespan, docs_url="/api/docs",
               openapi_url="/api/openapi.json")
-app.add_middleware(GZipMiddleware, minimum_size=1000)
+app.add_middleware(SelectiveGZip, minimum_size=1000)
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
 T = Jinja2Templates(directory=str(config.BASE_DIR / "templates"))
 signer = URLSafeTimedSerializer(config.SECRET_KEY, salt="admin")
 if config.SECRET_KEY == "dev-only-change-me":
-    logging.getLogger("ecco").warning("SECRET_KEY is the development default; set it on the Deployment")
+    log.warning("SECRET_KEY is the development default; set it on the Deployment")
 if not (config.ADMIN_PASSWORD or ":" in config.ADMIN_USERS):
-    logging.getLogger("ecco").warning("no ADMIN_PASSWORD or ADMIN_USERS set: admin login is disabled")
+    log.warning("no ADMIN_PASSWORD or ADMIN_USERS set: admin login is disabled")
 
 
 # ================================================================= template helpers
@@ -103,7 +127,6 @@ def logos():
 def _asset_version():
     """Changes whenever a file under static/ changes, so browsers never keep
     an old stylesheet or script after a deploy."""
-    import hashlib
     h = hashlib.sha1()
     root = Path(__file__).parent / "static"
     for f in sorted(root.rglob("*")):
@@ -119,10 +142,23 @@ T.env.globals.update(
     plate_url=N.plate_url, plate_label=N.plate_label, class_label=N.class_label,
     humanize=N.humanize, orn_class_url=orn_class_url, viewer_url=imaging.viewer_url,
     KIND_COLOR=config.KIND_COLOR, KIND_LABEL=config.KIND_LABEL, SOURCES=config.SOURCES,
-    VERDICTS=lending.VERDICTS, pct=pct)
+    VERDICTS=lending.VERDICTS, pct=pct, trade_publisher=lending.trade_publisher,
+    EXPLANATIONS=dict(config.REVIEW_EXPLANATIONS))
 
 
 # ================================================================= request helpers
+def client_ip(request: Request) -> str:
+    fwd = request.headers.get("x-forwarded-for", "")
+    return (fwd.split(",")[0].strip() if fwd else "") or (
+        request.client.host if request.client else "?")
+
+
+def safe_back(back: str, default: str = "/") -> str:
+    """Only same-site paths; '//other.site' is an absolute URL (v2.5)."""
+    b = back or ""
+    return b if b.startswith("/") and not b.startswith("//") and "\\" not in b else default
+
+
 def admin_user(request: Request) -> str | None:
     tok = request.cookies.get(config.SESSION_COOKIE)
     if not tok:
@@ -186,17 +222,44 @@ def strip_points(rows, total_pages):
     return pts, tp
 
 
+# simple per-address counters (per worker; enough for a small site)
+_hits: dict = {}
+
+
+def too_many(key: str, limit: int, window: float) -> bool:
+    now = time.time()
+    ts = [t for t in _hits.get(key, []) if now - t < window]
+    if len(ts) >= limit:
+        _hits[key] = ts
+        return True
+    ts.append(now)
+    _hits[key] = ts
+    if len(_hits) > 5000:
+        _hits.clear()
+    return False
+
+
+# ================================================================= robots (v2.5)
+@app.get("/robots.txt", include_in_schema=False)
+def robots():
+    return PlainTextResponse(
+        "User-agent: *\n"
+        "Disallow: /img/\nDisallow: /api/\nDisallow: /search/\nDisallow: /compare\n"
+        "Disallow: /admin\nDisallow: /lending\nDisallow: /reprints\n"
+        "Disallow: /*?*sort=\nDisallow: /*?*src=\n")
+
+
 # ================================================================= front page
 @app.get("/", response_class=HTMLResponse)
 def home(request: Request):
     avail = db.sources_available()
     cc = db.class_counts()
     rows = []
+    plural = {"superclass": "superclasses", "subclass": "subclasses",
+              "variant": "variants", "cluster": "clusters"}
     for s, spec in config.SOURCES.items():
         if s not in avail:
             continue
-        plural = {"superclass": "superclasses", "subclass": "subclasses",
-                  "variant": "variants", "cluster": "clusters"}
         n_cls = [dict(level=lv, n=cc.get((s, lv), 0),
                       text=f"{cc.get((s, lv), 0):,} {lv if cc.get((s, lv), 0) == 1 else plural[lv]}")
                  for lv in spec["levels"] if cc.get((s, lv), 0)]
@@ -215,6 +278,10 @@ def about(request: Request):
 @app.get("/books", response_class=HTMLResponse)
 def books(request: Request, q: str = "", kind: str = "", tonson: int = 0, place: str = "",
           sort: str = "", dir: str = "", page_no: int = Query(1, alias="p", ge=1)):
+    if q and page_no == 1:
+        bid = db.book_by_ident(q)          # an ESTC number or ECCO id goes to the book (v2.5)
+        if bid:
+            return RedirectResponse(f"/book/{bid}", status_code=303)
     limit = 30
     sort = sort if sort in db.BOOK_SORTS else ""
     desc = (dir == "desc") if dir else sort == "n"
@@ -225,7 +292,8 @@ def books(request: Request, q: str = "", kind: str = "", tonson: int = 0, place:
     st = db.strips(ids)
     strips = {r["book_id"]: strip_points(st[r["book_id"]], r["total_pages"]) for r in rows}
     pages = math.ceil(total / limit)
-    filt = {"q": q, "kind": kind, "tonson": tonson, "place": place}
+    # the pager carries the corrected words, or page 2 would search the typo again (v2.5)
+    filt = {"q": fixed or q, "kind": kind, "tonson": tonson, "place": place}
     sort_base = "/books?" + urlencode(filt)
     base = sort_base + f"&sort={sort}&dir={'desc' if desc else 'asc'}"
     return page(request, "books.html", rows=rows, total=total, q=q, kind=kind, tonson=tonson,
@@ -258,16 +326,24 @@ def ornament_detail(request: Request, oid: str, sim: str = ""):
         raise HTTPException(404, "ornament not found")
     has_ann = bool(o["ann_src"] and o["class_path"])
     has_cl = bool(o["hc_cluster"] and not o["cluster_rejected"])
+    has_vec = db.ornament_vector(oid) is not None
     sim = sim if sim in ("hier", "cluster", "embed") else ("hier" if has_ann else "cluster")
+    if sim == "embed" and not has_vec:
+        sim = "hier" if has_ann else "cluster"
+    if sim == "embed":
+        similar = embedding.similar_to_ornament(oid, o["kind"], 3)
+    else:
+        similar = db.similar_ornaments(o, sim, 3)
     names = {}
     if has_ann:
         pairs = [("superclass", o["superclass"])] + (
             [("subclass", o["subclass"])] if o["subclass"] else [])
         names = db.names_for(o["ann_src"], pairs)
     tsrc = o["ann_src"] or config.ann_source_for_kind(o["kind"])
+    st = embedding.engine.status()
     return page(request, "ornament.html", o=o, sim=sim, has_ann=has_ann, has_cl=has_cl,
-                similar=db.similar_ornaments(o, sim, 3),
-                embed_ok=db.embeddings_available(),
+                similar=similar, embed_ok=has_vec,
+                can_search=has_vec or st["model_loaded"],
                 names=names, spec_cls=most_specific(o), cl=cluster_of(o),
                 agents=db.book_agents(o["book_id"]) if o["book_id"] else [],
                 suggestions=db.class_suggestions(tsrc, o["superclass"]) if tsrc else [],
@@ -276,11 +352,15 @@ def ornament_detail(request: Request, oid: str, sim: str = ""):
 
 
 @app.post("/ornament/{oid}/report")
-def submit_report(oid: str, reporter: str = Form(""), suggestion: str = Form(""),
-                  note: str = Form("")):
+def submit_report(request: Request, oid: str, reporter: str = Form(""),
+                  suggestion: str = Form(""), note: str = Form(""), website: str = Form("")):
     o = db.get_ornament(oid)
     if not o:
         raise HTTPException(404)
+    if website.strip():                                  # honeypot: humans leave it empty
+        return RedirectResponse(f"/ornament/{oid}?reported=1#report", status_code=303)
+    if too_many("report:" + client_ip(request), 10, 3600):
+        return RedirectResponse(f"/ornament/{oid}?err=2#report", status_code=303)
     if not suggestion.strip() and not note.strip():
         return RedirectResponse(f"/ornament/{oid}?err=1#report", status_code=303)
     db.add_report(oid, reporter.strip()[:80], o["label"] or "(unlabelled)",
@@ -330,44 +410,100 @@ def classes(request: Request, tax: str = "", q: str = "", sort: str = "n", dir: 
 
 
 def composition(rows):
+    """Houses per role, each role with its OWN denominator (v2.5, DESIGN §4.1):
+    books that name a publisher / books that name a printer."""
     by_role = {"publisher": {}, "printer": {}}
-    known = set()
+    known = {"publisher": set(), "printer": set()}
     for r in rows:
-        if r["agent_id"] is None:
+        if r["agent_id"] is None or r["role"] not in by_role:
             continue
-        known.add(r["book_id"])
+        known[r["role"]].add(r["book_id"])
         d = by_role[r["role"]].setdefault(r["agent_id"], dict(
-            agent_id=r["agent_id"], name=r["name"], display=r["display_name"] or r["name"], n=0))
-        d["n"] += 1
+            agent_id=r["agent_id"], name=r["name"], display=r["display_name"] or r["name"],
+            books=set()))
+        d["books"].add(r["book_id"])
     out = {}
     for role, d in by_role.items():
-        tot = sum(v["n"] for v in d.values()) or 1
-        items = sorted(d.values(), key=lambda v: (-v["n"], v["name"]))
-        for v in items:
-            v["coverage"] = v["n"] / max(1, len(known))
-            v["credit"] = v["n"] / tot
+        items = []
+        for v in d.values():
+            v["n"] = len(v.pop("books"))
+            v["coverage"] = v["n"] / max(1, len(known[role]))
+            items.append(v)
+        items.sort(key=lambda v: (-v["n"], v["name"]))
         out[role] = items
-    return out, len(known)
+    return out, {k: len(v) for k, v in known.items()}
+
+
+def swimlane(rows, owners=(), top=6):
+    """Houses through time (DESIGN §5.6): one row per house, one dot per book.
+    Hollow = a book that names none of the main houses. Server-drawn SVG data."""
+    books, houses = {}, {}
+    for r in rows:
+        b = books.setdefault(r["book_id"], {"year": r["year"], "title": r["full_title"],
+                                            "agents": set()})
+        if r["agent_id"] is not None:
+            b["agents"].add(r["agent_id"])
+            h = houses.setdefault(r["agent_id"], {"id": r["agent_id"], "name": r["name"],
+                                                  "display": r["display_name"] or r["name"],
+                                                  "books": set()})
+            h["books"].add(r["book_id"])
+    years = [b["year"] for b in books.values() if b["year"]]
+    if not years or not houses:
+        return None
+    y0, y1 = min(years), max(years)
+    if y1 - y0 < 4:
+        y0, y1 = y0 - 2, y1 + 2
+    own = set(owners)
+    order = sorted(houses.values(),
+                   key=lambda h: (h["id"] not in own, -len(h["books"]), h["name"]))[:top]
+    L, R, rowh, top_y = 200, 985, 26, 8
+
+    def xx(y):
+        return round(L + (y - y0) / (y1 - y0) * (R - L), 1)
+    lanes = []
+    for i, h in enumerate(order):
+        dots = []
+        for bid in h["books"]:
+            b = books[bid]
+            if not b["year"]:
+                continue
+            dots.append(dict(x=xx(b["year"]), year=b["year"],
+                             hollow=bool(own) and h["id"] not in own and not (b["agents"] & own),
+                             title=f"{b['year']}: {(b['title'] or bid)[:90]}", href=f"/book/{bid}"))
+        dots.sort(key=lambda d: d["x"])
+        lanes.append(dict(y=top_y + i * rowh + rowh / 2, name=h["name"], display=h["display"],
+                          n=len(h["books"]), main=h["id"] in own, dots=dots))
+    bottom = top_y + len(lanes) * rowh
+    band = None
+    if own:
+        oy = [b["year"] for b in books.values() if b["year"] and b["agents"] & own]
+        if oy:
+            band = (xx(min(oy)), round(max(2.0, xx(max(oy)) - xx(min(oy))), 1))
+    span = y1 - y0
+    step = 5 if span <= 30 else (10 if span <= 90 else 20)
+    ticks = [(xx(t), t) for t in range(((y0 + step - 1) // step) * step, y1 + 1, step)]
+    return dict(lanes=lanes, ticks=ticks, band=band, L=L, R=R, top=top_y, bottom=bottom,
+                height=bottom + 26, more=len(houses) - len(order),
+                n_undated=sum(1 for b in books.values() if not b["year"]))
 
 
 def pie_slices(items, total, r=70, cx=80, cy=80, max_slices=8):
     """SVG path for each slice (server-drawn pie, §12.2). The tail beyond
     `max_slices` is merged into one "other places" slice."""
-    import math as _m
     items = list(items)
     if len(items) > max_slices:
         rest = items[max_slices - 1:]
         items = items[:max_slices - 1] + [dict(key=None, place="other places",
                                                n=sum(i["n"] for i in rest), other=True)]
-    out, a0 = [], -_m.pi / 2
+    out, a0 = [], -math.pi / 2
     for i, it in enumerate(items):
         frac = it["n"] / max(total, 1)
-        a1 = a0 + frac * 2 * _m.pi
+        a1 = a0 + frac * 2 * math.pi
         if frac >= 0.9999:
             d = f"M{cx},{cy - r} A{r},{r} 0 1,1 {cx - 0.01},{cy - r} Z"
         else:
-            x0, y0 = cx + r * _m.cos(a0), cy + r * _m.sin(a0)
-            x1, y1 = cx + r * _m.cos(a1), cy + r * _m.sin(a1)
+            x0, y0 = cx + r * math.cos(a0), cy + r * math.sin(a0)
+            x1, y1 = cx + r * math.cos(a1), cy + r * math.sin(a1)
             large = 1 if frac > 0.5 else 0
             d = f"M{cx},{cy} L{x0:.2f},{y0:.2f} A{r},{r} 0 {large},1 {x1:.2f},{y1:.2f} Z"
         out.append(dict(it, d=d, i=i % 8, frac=frac))
@@ -434,7 +570,8 @@ def class_detail(request: Request, src: str, level: str, value: str, order: str 
         if level == "superclass":
             sup = value
         elif level == "subclass":
-            sup = members[0]["superclass"] if members else None
+            # from the value, not from the first image: a filtered page may be empty (v2.5)
+            sup = re.sub(r"_\d+$", "", value)
             sub = value
         else:
             sup, sub, _ = workbench.split_path(src, value)
@@ -445,7 +582,7 @@ def class_detail(request: Request, src: str, level: str, value: str, order: str 
     pparams = places.Params.from_query(request.query_params)
     contrast, group, links, prows = None, None, [], []
     if level in ("superclass", "subclass"):
-        prows = db.design_place_rows(src, level, value)
+        prows = db.design_place_rows(src, level, value)     # [] for DI/FT (v2.5)
     elif level == "cluster":
         links = db.cluster_links(src, value)
         group = db.cluster_group(src, value)
@@ -457,9 +594,14 @@ def class_detail(request: Request, src: str, level: str, value: str, order: str 
     contrast_ex = {}
     if contrast:
         lv = {"superclass": "subclass", "subclass": "variant", "cluster": "cluster"}[level]
+        keys = [k for k, _ in contrast["places"]]
         for d in contrast["designs"]:
             d["level"], d["url_value"] = lv, d["design"]
             d["exemplar"] = db.class_exemplar(src, lv, d["design"])
+            d["bars"] = [dict(i=i, name=name, v=d["dist"].get(k, 0.0))
+                         for i, (k, name) in enumerate(contrast["places"]) if d["dist"].get(k)]
+            d["other"] = max(0.0, 1.0 - sum(d["dist"].get(k, 0.0) for k in keys))
+            d["top_share"] = d["dist"].get(d["top"], 0.0) if d["top"] else 0.0
         contrast_ex = {d["design"]: d for d in contrast["designs"]}
         for pr in contrast["pairs"]:
             A, B = contrast_ex[pr["a"]], contrast_ex[pr["b"]]
@@ -467,7 +609,10 @@ def class_detail(request: Request, src: str, level: str, value: str, order: str 
                                         compare.Side(src, B["level"], B["url_value"]))
     params = lending.Params.from_query(request.query_params)
     lend = lending.analyse_rows(rows, params) if row["plate_key"] else None
+    owners_ok = set(lend.owners) if lend and lend.eligible else set()
+    lane = swimlane(rows, owners_ok)
     ag = db.agents_by_id({e["borrower"] for e in lend.events} | set(lend.owners)) if lend else {}
+    printer_named = db.books_naming_printer([e["book_id"] for e in lend.events]) if lend else set()
     pages = math.ceil((filt["n"] if filt else row["n"]) / limit)
     curl = class_url(src, level, value)
     main_key = place_mix["items"][0]["key"] if place_mix["items"] else None
@@ -476,18 +621,18 @@ def class_detail(request: Request, src: str, level: str, value: str, order: str 
                                                  main_key, main_name)
                    for it in place_mix["items"]}
     house_menus = {m["agent_id"]: compare.house_menu(curl, src, level, value, m["name"], m["display"])
-                   for role in ("publisher", "printer") for m in comp[role]}
+                   for role in ("publisher", "printer") for m in comp[role][:8]}
     fq = urlencode({k: v for k, v in (("place", place), ("agent", agent), ("book", book)) if v})
     return page(request, "class.html", src=src, level=level, value=value, spec=spec, row=row,
                 filt=filt, place_menus=place_menus, house_menus=house_menus,
                 compare_url=compare.url(compare.Side(src, level, value)),
                 has_coords=db.class_has_coords(src, level, value),
                 class_key=f"{src}:{level}:{value}",
-                n_designs=n_designs,
+                n_designs=n_designs, lane=lane, printer_named=printer_named,
                 members=members, order=order, sup=sup, sub=sub, names=names,
-                comp=comp, n_known=n_known, places=place_mix, lend=lend, lend_agents=ag, params=params,
-                contrast=contrast, contrast_ex=contrast_ex, pparams=pparams, group=group, links=links,
-                owners=set(lend.owners) if lend and lend.eligible else set(),
+                comp=comp, n_known=n_known, places=place_mix, lend=lend, lend_agents=ag,
+                params=params, contrast=contrast, contrast_ex=contrast_ex, pparams=pparams,
+                group=group, links=links, owners=owners_ok,
                 borrowers=set(lend.borrowers) if lend else set(),
                 struct=db.class_structure(src, level, value, sup, sub),
                 xref=db.class_crossref(src, level, value),
@@ -506,8 +651,12 @@ def agents(request: Request, q: str = "", sort: str = "books", dir: str = ""):
                 sel=sel, avail=avail, sq=sq, sort=sort, desc=desc)
 
 
+AGENT_PAGE = 120
+
+
 @app.get("/agent/{name}", response_class=HTMLResponse)
-def agent_detail(request: Request, name: str, view: str = "used", joint: int = 0):
+def agent_detail(request: Request, name: str, view: str = "used", joint: int = 0,
+                 page_no: int = Query(1, alias="p", ge=1)):
     a = db.get_agent(name)
     if not a:
         raise HTTPException(404, "house not found")
@@ -522,14 +671,21 @@ def agent_detail(request: Request, name: str, view: str = "used", joint: int = 0
     owned = [r for r in used if owns(r, bool(joint))]
     plates = owned if view == "owned" else used
     n_used, n_owned = len(used), sum(1 for r in used if owns(r, False))
-    ev = lending.find_events(lending.Params(), sel, agent_id=a["agent_id"]) if sel else []
-    lent = sum(1 for e in ev if a["agent_id"] in e["owners"])
-    borrowed = sum(1 for e in ev if e["borrower"] == a["agent_id"])
+    shown = plates[(page_no - 1) * AGENT_PAGE: page_no * AGENT_PAGE]     # paged (v2.5)
+    ev = []
+    if sel and (config.UNUSUAL_IMPRINTS_PUBLIC or admin_user(request)):
+        ev = lending.find_events(lending.Params(), sel, agent_id=a["agent_id"])
+    as_main = sum(1 for e in ev if a["agent_id"] in e["owners"])
+    as_other = sum(1 for e in ev if e["borrower"] == a["agent_id"])
+    base = f"/agent/{name}?view={view}" + ("&joint=1" if joint else "") + (f"&{sq}" if sq else "")
     return page(request, "agent.html", a=a, stats=db.agent_stats(a["agent_id"], sel),
-                plates=plates, view=view, joint=joint, n_used=n_used, n_owned=n_owned,
+                plates=shown, n_plates=len(plates), view=view, joint=joint,
+                n_used=n_used, n_owned=n_owned,
                 similar=db.similar_agents(a["agent_id"], sel) if sel else [],
                 cohold=db.coholders(a["agent_id"], sel) if sel else [],
-                lent=lent, borrowed=borrowed, sel=sel, avail=avail, sq=sq)
+                as_main=as_main, as_other=as_other, sel=sel, avail=avail, sq=sq,
+                page_no=page_no, pager=pager(page_no, math.ceil(len(plates) / AGENT_PAGE)),
+                base=base)
 
 
 @app.get("/agents/pair/{a}/{b}", response_class=HTMLResponse)
@@ -552,65 +708,82 @@ def agent_pair(request: Request, a: str, b: str, page_no: int = Query(1, alias="
                 base=f"/agents/pair/{a}/{b}?{sq}")
 
 
-# ================================================================= lending
+# ================================================================= unusual imprints (§4.5)
 def lending_context(request: Request):
+    if not config.UNUSUAL_IMPRINTS_PUBLIC and not admin_user(request):
+        raise HTTPException(403, "this page is open to the project team only")
     sel, avail, sq = selected_sources(request)
     p = lending.Params.from_query(request.query_params)
     agent = request.query_params.get("agent", "")
     plate = request.query_params.get("plate", "")
+    hide_trade = request.query_params.get("hide_trade") == "1"
     A = db.get_agent(agent) if agent else None
     events = lending.find_events(p, sel, A["agent_id"] if A else None, plate or None) \
         if sel else []
-    return sel, avail, sq, p, A, plate, events
+    ag = db.agents_by_id({e["borrower"] for e in events} | {o for e in events for o in e["owners"]})
+    for e in events:
+        e["trade"] = lending.trade_publisher(ag.get(e["borrower"], {}).get("name"), e["year"])
+    n_trade = sum(1 for e in events if e["trade"])
+    if hide_trade:
+        events = [e for e in events if not e["trade"]]
+    return sel, avail, sq, p, A, plate, events, ag, hide_trade, n_trade
 
 
 @app.get("/lending", response_class=HTMLResponse)
 def lending_page(request: Request, page_no: int = Query(1, alias="p", ge=1)):
-    sel, avail, sq, p, A, plate, events = lending_context(request)
-    ids = {e["borrower"] for e in events} | {o for e in events for o in e["owners"]}
-    ag = db.agents_by_id(ids)
+    sel, avail, sq, p, A, plate, events, ag, hide_trade, n_trade = lending_context(request)
     reviews = db.lending_reviews({e["plate"] for e in events})
     counts = {k: sum(1 for e in events if e["verdict"] == k) for k in lending.VERDICTS}
     limit = 100
     shown = events[(page_no - 1) * limit: page_no * limit]
+    printer_named = db.books_naming_printer([e["book_id"] for e in shown])
     qs = p.as_query() + (f"&{sq}" if sq else "") + (f"&agent={A['name']}" if A else "") + \
-        (f"&plate={quote(plate)}" if plate else "")
+        (f"&plate={quote(plate)}" if plate else "") + ("&hide_trade=1" if hide_trade else "")
     return page(request, "lending.html", events=shown, n_events=len(events),
                 n_plates=len({e["plate"] for e in events}), counts=counts, ag=ag,
                 reviews=reviews, p=p, A=A, plate=plate, sel=sel, avail=avail, sq=sq, qs=qs,
+                hide_trade=hide_trade, n_trade=n_trade, printer_named=printer_named,
                 page_no=page_no, pager=pager(page_no, math.ceil(len(events) / limit)),
                 base="/lending?" + qs)
 
 
 @app.get("/lending.csv")
 def lending_csv(request: Request):
-    sel, avail, sq, p, A, plate, events = lending_context(request)
-    ag = db.agents_by_id({e["borrower"] for e in events} | {o for e in events for o in e["owners"]})
+    sel, avail, sq, p, A, plate, events, ag, hide_trade, n_trade = lending_context(request)
     buf = io.StringIO()
     w = csv.writer(buf)
-    w.writerow(["plate", "label", "owners", "owner_coverage", "borrower", "borrower_coverage",
-                "book_id", "title", "year", "owner_first_year", "owner_last_year",
-                "owner_median_year", "gap_years", "verdict", "books_with_imprint"])
+    w.writerow(["plate", "label", "main_houses", "main_coverage", "other_house", "other_coverage",
+                "trade_publisher", "book_id", "title", "year", "main_first_year",
+                "main_last_year", "main_median_year", "gap_years", "time_position",
+                "books_with_imprint"])
     for e in events:
         w.writerow([e["plate"], N.plate_label(e["plate"]),
                     "+".join(ag[o]["name"] for o in e["owners"] if o in ag),
                     "+".join(f"{s:.3f}" for s in e["owner_shares"]),
                     ag.get(e["borrower"], {}).get("name"), f"{e['borrower_share']:.3f}",
-                    e["book_id"], e["title"], e["year"], e["owner_span"][0], e["owner_span"][1],
-                    e["owner_median"], e["gap"], e["verdict"], e["n_known"]])
+                    int(e["trade"]), e["book_id"], e["title"], e["year"], e["owner_span"][0],
+                    e["owner_span"][1], e["owner_median"], e["gap"],
+                    lending.VERDICTS[e["verdict"]][0], e["n_known"]])
     return PlainTextResponse(buf.getvalue(), media_type="text/csv", headers={
-        "Content-Disposition": "attachment; filename=lending_events.csv"})
+        "Content-Disposition": "attachment; filename=unusual_imprints.csv"})
 
 
 @app.post("/admin/lending/review")
 def lending_review(request: Request, plate: str = Form(...), owner_ids: str = Form(...),
                    borrower_id: int = Form(...), book_id: str = Form(...),
-                   status: str = Form(...), back: str = Form("/lending")):
+                   explanation: str = Form(""), status: str = Form(""),
+                   back: str = Form("/lending")):
     who = need_admin(request)
-    if status not in ("confirmed", "rejected", "clear"):
-        raise HTTPException(400)
-    db.set_lending_review(plate, owner_ids, borrower_id, book_id, status, who)
-    return RedirectResponse(back if back.startswith("/") else "/lending", status_code=303)
+    explanations = dict(config.REVIEW_EXPLANATIONS)
+    if status == "clear":
+        db.set_lending_review(plate, owner_ids, borrower_id, book_id, "clear", who)
+    elif explanation in explanations:
+        # stored without a schema change: confirmed + note, or rejected + 'error' (§4.5)
+        st = "rejected" if explanation == "error" else "confirmed"
+        db.set_lending_review(plate, owner_ids, borrower_id, book_id, st, who, explanation)
+    else:
+        raise HTTPException(400, "unknown explanation")
+    return RedirectResponse(safe_back(back, "/lending"), status_code=303)
 
 
 # ================================================================= images
@@ -622,23 +795,56 @@ def _img(data, ok_age=604800):
                     headers={"Cache-Control": f"public, max-age={ok_age}"})
 
 
-@app.get("/img/crop/{oid}.jpg")
-def img_crop(oid: str, w: int = Query(None, ge=32, le=2000)):
+async def _run_image_job(fn, *args):
+    """Run an image job on the image pool; after IMAGE_ROUTE_TIMEOUT return a
+    'loading' placeholder that is not cached (the job finishes and fills the cache)."""
+    fut = asyncio.get_running_loop().run_in_executor(_img_pool, fn, *args)
+    try:
+        return await asyncio.wait_for(fut, timeout=config.IMAGE_ROUTE_TIMEOUT), False
+    except asyncio.TimeoutError:
+        return None, True
+
+
+def _loading():
+    return Response(imaging.placeholder_svg("loading…"), media_type="image/svg+xml",
+                    headers={"Cache-Control": "no-store"})
+
+
+def _crop_job(oid, w):
     o = db.get_ornament_min(oid)
     if not o:
-        raise HTTPException(404)
-    return _img(imaging.get_crop(o, w), ok_age=86400)
+        return False
+    return imaging.get_crop(o, w)
 
 
-@app.get("/img/class/{src}/{level}/{value:path}.jpg")
-def img_class(src: str, level: str, value: str, w: int = Query(None, ge=32, le=2000)):
-    if src not in config.SOURCES:
-        raise HTTPException(404)
+def _class_job(src, level, value, w):
     oid = db.class_exemplar(src, level, value)
     o = db.get_ornament_min(oid) if oid else None
     if not o:
+        return False
+    return imaging.get_crop(o, w)
+
+
+@app.get("/img/crop/{oid}.jpg")
+async def img_crop(oid: str, w: int = Query(None, ge=32, le=2000)):
+    data, timed_out = await _run_image_job(_crop_job, oid, w)
+    if timed_out:
+        return _loading()
+    if data is False:
         raise HTTPException(404)
-    return _img(imaging.get_crop(o, w), ok_age=3600)
+    return _img(data, ok_age=86400)
+
+
+@app.get("/img/class/{src}/{level}/{value:path}.jpg")
+async def img_class(src: str, level: str, value: str, w: int = Query(None, ge=32, le=2000)):
+    if src not in config.SOURCES:
+        raise HTTPException(404)
+    data, timed_out = await _run_image_job(_class_job, src, level, value, w)
+    if timed_out:
+        return _loading()
+    if data is False:
+        raise HTTPException(404)
+    return _img(data, ok_age=3600)
 
 
 @app.get("/img/page/{oid}")
@@ -688,19 +894,29 @@ def admin_login_form(request: Request):
     return page(request, "admin_login.html", err=None, name="", login_configured=login_configured())
 
 
+def _eq(a: str, b: str) -> bool:
+    return hmac.compare_digest(a.encode(), b.encode())
+
+
 def check_password(name: str, password: str) -> bool:
     users = dict(p.split(":", 1) for p in config.ADMIN_USERS.split(",") if ":" in p)
     if name in users:
-        return password == users[name]
-    return bool(config.ADMIN_PASSWORD) and password == config.ADMIN_PASSWORD
+        return _eq(password, users[name])
+    return bool(config.ADMIN_PASSWORD) and _eq(password, config.ADMIN_PASSWORD)
 
 
 @app.post("/admin/login")
 def admin_login(request: Request, name: str = Form(""), password: str = Form("")):
     name = name.strip()[:40]
+    ip = client_ip(request)
+    if too_many("loginfail:" + ip, 8, 600):
+        return page(request, "admin_login.html", err="Too many attempts; wait ten minutes.",
+                    name=name, status_code=429, login_configured=login_configured())
     if not name or not check_password(name, password):
+        time.sleep(1.0)
         return page(request, "admin_login.html", err="Name or password not accepted.",
                     name=name, status_code=401, login_configured=login_configured())
+    _hits.pop("loginfail:" + ip, None)
     r = RedirectResponse("/admin", status_code=303)
     r.set_cookie(config.SESSION_COOKIE, signer.dumps({"u": name}), httponly=True,
                  samesite="lax", secure=request.url.scheme == "https",
@@ -834,8 +1050,6 @@ async def admin_workbench_save(request: Request):
     return {"ok": True, "saved": n}
 
 
-
-
 # ================================================================= compare (§12.7)
 @app.get("/compare", response_class=HTMLResponse)
 def compare_page(request: Request):
@@ -880,7 +1094,6 @@ def api_class_geo(c: str = ""):
     by_book = {}
     for a in agents:
         by_book.setdefault(a["book_id"], []).append((a["name"], a["display"]))
-    # places in pie order: by number of books with a known place, then key
     counts = {}
     for b in books:
         if b["place_key"]:
@@ -890,10 +1103,10 @@ def api_class_geo(c: str = ""):
     for b in books:
         if b["place_key"] and b["lat"] is not None and b["place_key"] not in info:
             info[b["place_key"]] = (b["place"], float(b["lat"]), float(b["lon"]))
-    places = [[k_, info[k_][0], round(info[k_][1], 4), round(info[k_][2], 4)]
-              for k_ in order if k_ in info]
-    pidx = {p_[0]: i for i, p_ in enumerate(places)}
-    colour = {k_: i % 8 for i, k_ in enumerate(order)}            # the pie's colours
+    places_ = [[k_, info[k_][0], round(info[k_][1], 4), round(info[k_][2], 4)]
+               for k_ in order if k_ in info]
+    pidx = {p_[0]: i for i, p_ in enumerate(places_)}
+    colour = {k_: i % 8 for i, k_ in enumerate(order)}
     houses, hidx, rows = [], {}, []
     n_noyear = n_noplace = 0
     for b in books:
@@ -915,8 +1128,8 @@ def api_class_geo(c: str = ""):
     main_key = order[0] if order else None
     menus = {p_[0]: compare.place_menu(curl, src, level, value, p_[0], p_[1], main_key,
                                        info.get(main_key, (main_key,))[0] if main_key else None)
-             for p_ in places}
-    return {"places": places, "colours": [colour[p_[0]] for p_ in places], "houses": houses,
+             for p_ in places_}
+    return {"places": places_, "colours": [colour[p_[0]] for p_ in places_], "houses": houses,
             "books": rows, "n_books": len(books), "n_noyear": n_noyear, "n_noplace": n_noplace,
             "menus": menus}
 
@@ -935,7 +1148,7 @@ def api_class_facets(c: str = ""):
 def reprints(request: Request, all: int = 0, page_no: int = Query(1, alias="p", ge=1)):
     limit = 50
     rows, total = db.book_pairs(not all, limit, (page_no - 1) * limit)
-    shared = db.shared_plates(rows)
+    shared = db.shared_plates(rows)            # PAIR_THUMBS per pair (v2.5)
     menus = {(a, b, s["plate"]): compare.plate_pair_menu(s["plate"], a, b)
              for (a, b), plates in shared.items() for s in plates}
     return page(request, "reprints.html", rows=rows, total=total, stats=db.pair_stats(),
@@ -962,10 +1175,19 @@ def admin_link(request: Request, src: str = Form(...), a: str = Form(...), b: st
                action: str = Form(...), back: str = Form("/")):
     need_admin(request)
     db.set_link_rejected(src, a, b, action == "reject")
-    return RedirectResponse(back if back.startswith("/") else "/", status_code=303)
+    return RedirectResponse(safe_back(back), status_code=303)
 
 
 # ================================================================= image search (§9)
+_TOKEN = re.compile(r"[0-9a-f]{16}")
+
+
+def _tok(token: str) -> str:
+    if not _TOKEN.fullmatch(token or ""):
+        raise HTTPException(404, "unknown query")
+    return token
+
+
 def _class_of(o):
     t = most_specific(o) or cluster_of(o)
     return dict(url=class_url(*t), label=o["label"]) if t else None
@@ -983,22 +1205,41 @@ def image_search_status():
 
 @app.post("/api/image-search")
 async def image_search_upload(file: UploadFile = File(...)):
-    data = await file.read()
+    data = await file.read(config.QUERY_MAX_BYTES + 1)     # bounded read (v2.5)
     if len(data) > config.QUERY_MAX_BYTES:
         raise HTTPException(413, "image larger than 8 MB")
     try:
         tok, im = embedding.save_query_image(data)
     except Exception:  # noqa: BLE001
-        raise HTTPException(400, "not an image we can read (JPEG, PNG, TIFF, WebP)")
+        raise HTTPException(400, "not an image we can read (JPEG, PNG, TIFF, WebP; "
+                                 "at most 40 megapixels)")
     return {"token": tok, "w": im.width, "h": im.height}
+
+
+def _blank_jpeg():
+    from PIL import Image as _I
+    buf = io.BytesIO()
+    _I.new("RGB", (300, 120), (239, 236, 230)).save(buf, "JPEG")
+    return buf.getvalue()
 
 
 @app.post("/search/image/from/{oid}")
 def image_search_from_ornament(oid: str):
-    """Start a search with an existing ornament's own crop."""
+    """Search with an existing ornament. v2.5: with a stored vector no page is
+    downloaded and no model is run; otherwise cut the crop and embed it."""
     o = db.get_ornament_min(oid)
     if not o:
         raise HTTPException(404)
+    blob = db.ornament_vector(oid)
+    if blob is not None and embedding.engine.ensure_index():
+        vec = embedding.decode(blob)
+        res = embedding.engine.match(vec, o["kind"])
+        shown = imaging.get_crop(o, 900) or _blank_jpeg()
+        tok, _ = embedding.save_query_image(shown)
+        embedding.update_state(tok, source_oid=oid, step="matched", kind=o["kind"],
+                               kind_scores={}, result=res,
+                               **{embedding.vec_key(o["kind"]): vec.tolist()})
+        return RedirectResponse(f"/search/image/{tok}", status_code=303)
     data = imaging.crop_exact(o)
     if not data:
         raise HTTPException(503, "the page image is not reachable at the moment")
@@ -1009,7 +1250,7 @@ def image_search_from_ornament(oid: str):
 
 @app.post("/api/image-search/{token}/embed")
 def image_search_embed(token: str):
-    im = embedding.load_query_image(token)
+    im = embedding.load_query_image(_tok(token))
     if im is None:
         raise HTTPException(404, "this query has expired")
     try:
@@ -1018,8 +1259,8 @@ def image_search_embed(token: str):
         raise HTTPException(503, str(e))
     scores = embedding.engine.kind_scores(vecs)
     kind = max(scores, key=scores.get) if scores else None
-    st = embedding.update_state(token, step="embedded", kind_scores=scores, kind=kind,
-                                **{embedding.vec_key(k): v.tolist() for k, v in vecs.items()})
+    embedding.update_state(token, step="embedded", kind_scores=scores, kind=kind,
+                           **{embedding.vec_key(k): v.tolist() for k, v in vecs.items()})
     return {"kind": kind, "kind_scores": scores, "model": embedding.engine.model_name,
             "expected_ms": embedding.engine.expected_ms("match")}
 
@@ -1028,9 +1269,11 @@ def image_search_embed(token: str):
 async def image_search_match(token: str, request: Request):
     body = await request.json()
     kind = body.get("kind")
-    st = embedding.read_state(token)
+    st = embedding.read_state(_tok(token))
     if not st or embedding.vec_key(kind) not in st:
         raise HTTPException(400, "embed first, or unknown type")
+    if not embedding.engine.ensure_index():
+        raise HTTPException(503, embedding.engine.error or "no embeddings loaded")
     import numpy as np
     vec = np.asarray(st[embedding.vec_key(kind)], dtype=np.float32)
     res = embedding.engine.match(vec, kind)
@@ -1040,10 +1283,13 @@ async def image_search_match(token: str, request: Request):
 
 @app.get("/search/image/{token}", response_class=HTMLResponse)
 def search_image_result(request: Request, token: str):
-    st = embedding.read_state(token)
+    st = embedding.read_state(_tok(token))
     if not st or not (embedding.query_dir() / f"{token}.jpg").exists():
         raise HTTPException(404, "this query has expired (results are kept for 24 hours)")
     res = st.get("result")
+    if res and st.get("source_oid"):
+        res = dict(res, images=[i for i in res.get("images", [])
+                                if i["oid"] != st["source_oid"]][:12])
     oids = [c["best_oid"] for c in (res or {}).get("classes", []) if c.get("best_oid")]
     oids += [i["oid"] for i in (res or {}).get("images", [])]
     brief = db.ornaments_brief(oids)
@@ -1055,18 +1301,19 @@ def search_image_result(request: Request, token: str):
 
 @app.get("/img/query/{token}.jpg")
 def img_query(token: str):
-    p = embedding.query_dir() / f"{token}.jpg"
+    p = embedding.query_dir() / f"{_tok(token)}.jpg"
     if not p.exists():
         raise HTTPException(404)
     return Response(p.read_bytes(), media_type="image/jpeg",
                     headers={"Cache-Control": "private, max-age=3600"})
+
 
 # ================================================================= health & errors
 @app.get("/healthz")
 def healthz():
     try:
         db.q("SELECT 1 AS ok", one=True)
-        return {"ok": True}
+        return {"ok": True, "image_server_paused": imaging.server_paused()}
     except Exception as e:  # noqa: BLE001
         return JSONResponse({"ok": False, "error": str(e)}, status_code=503)
 

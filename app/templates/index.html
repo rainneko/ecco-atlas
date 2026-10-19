@@ -7,7 +7,7 @@
        alt="An eighteenth-century printing house: compositors at the type case and pressmen inking and pulling a hand press.">{% endif %}
   <div class="wrap">
     <h1>{{ cfg.SITE_TITLE }}</h1>
-    <p>Which printers' ornaments appear in which eighteenth-century books, which blocks belonged to which houses, and when a block changed hands.</p>
+    <p>Which printers' ornaments appear in which eighteenth-century books, under whose imprints, and how that changed over time.</p>
     <form class="searchbar" action="/books" role="search">
       <label class="sr" for="hq">Book title</label>
       <input id="hq" name="q" placeholder="Search a book title, e.g. fable of the bees">
@@ -45,8 +45,8 @@
 <div class="cards">
   <a href="/books"><h3>Books</h3><p>Search titles. Each book shows its imprint and a page strip marking every page with an ornament, by type.</p></a>
   <a href="/classes"><h3>Ornaments</h3><p>Human classes (superclass, subclass, variant) and machine clusters, each with every image in date order.</p></a>
-  <a href="/agents"><h3>Publishers and printers</h3><p>Which plates each house used and held, and which houses held the same plates.</p></a>
-  <a href="/lending"><h3>Lending</h3><p>Plates held mainly by one house that turn up now and then under another.</p></a>
+  <a href="/agents"><h3>Publishers and printers</h3><p>Which blocks appear in the books each house is named in, and which houses share the same blocks.</p></a>
+  {% if cfg.UNUSUAL_IMPRINTS_PUBLIC or admin %}<a href="/lending"><h3>Unusual imprints</h3><p>Books where a block appears under another name than its usual house, with the possible explanations.</p></a>{% endif %}
   <a href="/reprints"><h3>Book pairs</h3><p>Books that share several blocks but were printed in different places.</p></a>
   <a href="/search/image"><h3>Image search</h3><p>Upload an ornament and find its type, its closest classes and the houses behind them.</p></a>
 </div>
@@ -55,7 +55,7 @@
 <ul class="kindlist">
   {% for k in kinds %}<li><i class="dot" style="background:{{ KIND_COLOR.get(k.kind, '#888') }}"></i><b>{{ k.kind }}</b> {{ KIND_LABEL.get(k.kind, k.kind) }}{{ help(k.kind) }} <span class="muted">{{ "{:,}".format(k.n) }}</span></li>{% endfor %}
 </ul>
-<p class="note">Only printers' ornaments and initials are in the atlas: blocks a house owned and reused. Illustrations belong to the book, not to the house, and are left out. <a href="/about#assumption">Why this matters</a>.</p>
+<p class="note">Only printers' ornaments and initials are in the atlas: blocks that the printing trade kept and used again. Illustrations belong to the book, not to the house, and are left out. <a href="/about#assumption">Why this matters</a>.</p>
 
 <h2>The research behind the atlas</h2>
 <div class="pubs">

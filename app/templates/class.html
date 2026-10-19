@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import othumb, pagerbar, mix, kdot, help, pie, menulink %}
+{% from "_macros.html" import othumb, pagerbar, hbars, swimlane, kdot, help, pie, menulink %}
 {% block title %}{{ title }} · {{ cfg.SITE_TITLE }}{% endblock %}
 {% set sup_name = names.get(('superclass', sup)) %}
 {% set sub_name = names.get(('subclass', sub)) %}
@@ -13,7 +13,7 @@
 <div class="class-head">
   <div>
     <h1>{{ kdot(row.kind) }}{{ title }}
-      {% if row.t_owned %}<span class="tag t-own" title="Tonson or Watts hold the largest share of this plate">T</span>{% endif %}</h1>
+      {% if row.t_owned %}<span class="tag t-own" title="Tonson or Watts are named most often in this block's books">T</span>{% endif %}</h1>
     {% if sup_name and sup_name.name %}<p class="name" style="font-size:17px;margin:0">{{ humanize(sup_name.name) }}</p>{% endif %}
     {% if sub_name and sub_name.name and level != 'superclass' %}<p class="note">Subgroup: {{ humanize(sub_name.name) }}</p>{% endif %}
     {% if sup_name and sup_name.alt_name %}<p class="note">Previously annotated as “{{ humanize(sup_name.alt_name) }}”.</p>{% endif %}
@@ -22,9 +22,10 @@
       <span><b>Images</b>{{ "{:,}".format(row.n) }}</span>
       <span><b>Books</b>{{ "{:,}".format(row.n_books) }}</span>
       <span><b>Years</b>{{ row.y0 or '?' }}–{{ row.y1 or '?' }}</span>
-      {% if row.plate_key %}<span><b>Plate</b>yes {{ help('plate') }}</span>{% endif %}
+      {% if row.plate_key %}<span><b>One block</b>{{ help('plate') }}</span>{% endif %}
     </div>
     <div class="inline">
+      <a class="btn quiet" href="#images">Images</a>
       <a class="btn quiet" href="{{ compare_url }}">Compare with…</a>
       {% if has_coords %}<a class="btn quiet" href="#map" data-open-map>Map through time</a>{% else %}<span class="btn quiet disabled" title="No book of this class has coordinates yet">No coordinates loaded</span>{% endif %}
       {% if admin and level in ('superclass', 'subclass', 'cluster') %}<a class="btn quiet" href="/admin/workbench/{{ src }}/{{ level }}/{{ value }}">Open in the workbench</a>{% endif %}
@@ -33,51 +34,53 @@
   <img src="{{ crop_url(row.exemplar, 900) }}" alt="Typical image of {{ title }}">
 </div>
 
-<h2>Who used it {{ help('coverage') }}</h2>
-<p class="note">Bar: each house's share of all imprint credits in this class (adds up to 100%). Percentages: the share of this class's {{ n_known }} books with a known imprint that name the house; a book can name several houses, so these can add up to more than 100%. Click a house or a place to compare its images with the rest.</p>
+<h2 id="houses">Who used it {{ help('coverage') }}</h2>
+<p class="note">Each bar is the share of books that name the house. A book can name several houses, so the shares can add up to more than 100%. Imprints usually name the bookseller first and often omit the printer, who normally held the block. Click a house or a place to compare its images with the rest.</p>
 <div class="panels three">
-  <section class="panel"><h3>Publishers</h3>{{ mix(comp.publisher, owners, borrowers, n_known, house_menus) }}</section>
-  <section class="panel"><h3>Printers</h3>{{ mix(comp.printer, owners, borrowers, n_known, house_menus) }}</section>
+  <section class="panel"><h3>Publishers</h3>{{ hbars(comp.publisher, n_known.publisher, 'publisher', owners, borrowers, house_menus) }}</section>
+  <section class="panel"><h3>Printers</h3>{{ hbars(comp.printer, n_known.printer, 'printer', owners, borrowers, house_menus) }}</section>
   <section class="panel"><h3>Where it was printed {{ help('place_share') }}</h3>
     {% if places.n_known %}
     {{ pie(places.slices, place_menus, places.n_known) }}
-    <p class="note">{{ places.n_known }} of {{ places.n_books }} books have a known place{% if places.n_books > places.n_known %}; {{ places.n_books - places.n_known }} do not{% endif %}. Click a place to compare.</p>
+    <p class="note">{{ places.n_known }} of {{ places.n_books }} books have a known place{% if places.n_books > places.n_known %}; {{ places.n_books - places.n_known }} do not{% endif %}.</p>
     {% else %}<p class="muted small">No place of publication is known for these books.</p>{% endif %}
   </section>
 </div>
 
-<details class="fold" id="lending">
-  <summary><h2>Lending {{ help('borrower') }}</h2><span class="foldsum">{%- if not row.plate_key -%}Judged per plate — open a design below
-{%- elif not lend.eligible -%}Too few books with an imprint ({{ lend.n_known }})
-{%- elif not lend.owners -%}No clear owner
-{%- else -%}Owner {% for a in lend.owners %}{{ lend_agents[a].display_name }}{{ ' + ' if not loop.last }}{% endfor %} · {{ lend.events|length }} possible loan{{ '' if lend.events|length == 1 else 's' }}{%- endif -%}</span><span class="foldbtn" aria-hidden="true"></span></summary>
-  <div class="foldbody">
-{% if not row.plate_key %}
-<p class="note">Lending is judged per plate, the level we take to be one physical block. {% if level == 'superclass' %}Open one of the designs below{% else %}Open one of the variants below{% endif %} to see it.</p>
-{% elif not lend.eligible %}
-<p class="note">Only {{ lend.n_known }} books with a known imprint; at least {{ params.min_books }} are needed to judge ownership.</p>
-{% elif not lend.owners %}
-<p class="note">No house appears in {{ pct(params.owner) }} or more of the books, so there is no clear owner to lend from.</p>
-{% else %}
-<p>Owner{{ 's' if lend.owners|length > 1 }}:
-  {% for a in lend.owners %}<a href="/agent/{{ lend_agents[a].name }}">{{ lend_agents[a].display_name }}</a> <span class="muted">({{ pct(lend.share[a]) }})</span>{{ ' + ' if not loop.last }}{% endfor %},
-  in use {{ lend.owner_span[0] or '?' }}–{{ lend.owner_span[1] or '?' }}.</p>
-{% if lend.events %}
-<table class="lend-events">
-  <thead><tr><th>Possible borrower</th><th class="num">Share</th><th>Book</th><th class="num">Year</th><th>Timing</th></tr></thead>
-  <tbody>{% for e in lend.events %}
-  <tr><td><a href="/agent/{{ lend_agents[e.borrower].name }}">{{ lend_agents[e.borrower].display_name }}</a></td>
-    <td class="num">{{ pct(lend.share[e.borrower]) }}</td>
-    <td><a href="/book/{{ e.book_id }}">{{ (e.title or e.book_id)[:70] }}</a></td>
-    <td class="num">{{ e.year or '–' }}</td>
-    <td><span class="verdict {{ e.verdict }}" title="{{ VERDICTS[e.verdict][1] }}{% if e.gap_median is not none %}; {{ e.gap_median|round|int }} years from the owner's median year{% endif %}">{{ VERDICTS[e.verdict][0] }}</span>{% if e.gap %} <span class="muted small">{{ e.gap }} yrs</span>{% endif %}</td></tr>
-  {% endfor %}</tbody>
-</table>
-{% else %}<p class="note">No other house falls in the borrower band ({{ pct(params.lo) }}–{{ pct(params.hi) }}) with a book that does not also name the owner.</p>{% endif %}
-<p class="note">Rule: owner in at least {{ pct(params.owner) }} of the books; borrower in {{ pct(params.lo) }}–{{ pct(params.hi) }}; at least {{ params.min_books }} books. <a href="/lending?{{ params.as_query() }}&plate={{ row.plate_key|urlencode }}">Adjust on the lending page</a>.</p>
+{% if lane %}
+<h3 id="timeline">Houses through time</h3>
+{{ swimlane(lane) }}
 {% endif %}
-  </div>
-</details>
+
+{% if row.plate_key and lend %}
+<section id="lending" class="imprints">
+  <h3>Books under other imprints {{ help('borrower') }}</h3>
+  {% if not lend.eligible %}
+  <p class="note">Only {{ lend.n_known }} books with a known imprint; at least {{ params.min_books }} are needed before a main house is named.</p>
+  {% elif not lend.owners %}
+  <p class="note">No house is named in {{ pct(params.owner) }} or more of the books, so there is no main house to compare with.</p>
+  {% else %}
+  <p>Main house: {% for a in lend.owners %}<a href="/agent/{{ lend_agents[a].name }}">{{ lend_agents[a].display_name }}</a> <span class="muted">({{ pct(lend.share[a]) }})</span>{{ ' + ' if not loop.last }}{% endfor %}, dated use {{ lend.owner_span[0] or '?' }}–{{ lend.owner_span[1] or '?' }}.</p>
+  {% if lend.events %}
+  <p class="note">These books carry the block but name another house and not the main one. The data does not say why: a trade publisher's name on the title page, the same printer working for another bookseller, a later sale of stock, a reissue of old sheets, a copied block or a data error all look like this.</p>
+  <table class="lend-events">
+    <thead><tr><th>Other house</th><th class="num">Share</th><th>Book</th><th class="num">Year</th><th>Time position</th></tr></thead>
+    <tbody>{% for e in lend.events %}{% set bh = lend_agents[e.borrower] %}
+    <tr><td><a href="/agent/{{ bh.name }}">{{ bh.display_name }}</a>
+        {% if trade_publisher(bh.name, e.year) %}<span class="tag fam" title="Listed in config.TRADE_PUBLISHERS for this year">trade publisher?</span>{% endif %}</td>
+      <td class="num">{{ pct(lend.share[e.borrower]) }}</td>
+      <td><a href="/book/{{ e.book_id }}">{{ (e.title or e.book_id)[:70] }}</a>{% if e.book_id not in printer_named %} <span class="muted small">printer not named</span>{% endif %}</td>
+      <td class="num">{{ e.year or '–' }}</td>
+      <td><span class="verdict" title="{{ VERDICTS[e.verdict][1] }}">{{ VERDICTS[e.verdict][0] }}</span>{% if e.gap %} <span class="muted small">{{ e.gap }} yrs</span>{% endif %}</td></tr>
+    {% endfor %}</tbody>
+  </table>
+  {% else %}<p class="note">No other house in the {{ pct(params.lo) }}–{{ pct(params.hi) }} band has a book that does not also name the main house.</p>{% endif %}
+  <p class="note">Main house: named in at least {{ pct(params.owner) }} of the books; other houses: {{ pct(params.lo) }}–{{ pct(params.hi) }}; at least {{ params.min_books }} books. {% if cfg.UNUSUAL_IMPRINTS_PUBLIC or admin %}<a href="/lending?{{ params.as_query() }}&plate={{ row.plate_key|urlencode }}">Adjust on the unusual-imprints page</a>.{% endif %}</p>
+  {% endif %}
+</section>
+{% elif not row.plate_key and level in ('superclass', 'subclass') %}
+<p class="note">Imprint comparisons are made per block; open one of the {{ 'designs' if level == 'superclass' else 'variants' }} below.</p>
+{% endif %}
 
 {% if has_coords %}
 <section id="map" class="geomap" data-key="{{ class_key }}" data-v="{{ asset_v }}" hidden aria-labelledby="map-h">
@@ -95,57 +98,59 @@
 
 {% if level == 'cluster' and links %}
 <h2>Related clusters <small>centroid similarity</small></h2>
-<p class="note">Clusters whose average embedding is close to this one (stored by <code>etl.link_clusters</code>). Together they act as one design for the place comparison below.</p>
+<p class="note">Clusters whose average embedding is close to this one. Together they act as one design for the place comparison below.</p>
 <div class="sibs">{% for l in links %}
-  <a class="sib {{ 'rej' if l.rejected }}" href="{{ class_url(src, 'cluster', l.other) }}">
-    <img loading="lazy" src="{{ crop_url(l.exemplar) if l.exemplar else '' }}" alt="">
-    <b>{{ kind }}-{{ l.other }} <span class="muted">{{ '%.2f'|format(l.sim) }}</span></b>
+  <div class="sib {{ 'rej' if l.rejected }}">
+    <a href="{{ class_url(src, 'cluster', l.other) }}"><img loading="lazy" src="{{ crop_url(l.exemplar) if l.exemplar else '' }}" alt=""></a>
+    <a href="{{ class_url(src, 'cluster', l.other) }}"><b>{{ spec.kind }}-{{ l.other }} <span class="muted">{{ '%.2f'|format(l.sim) }}</span></b></a>
     <span class="muted">{{ l.n or '?' }} images, {{ l.y0 or '?' }}–{{ l.y1 or '?' }}{% if l.rejected %} · rejected{% endif %}</span>
     {% if admin %}<form method="post" action="/admin/link" class="inline"><input type="hidden" name="src" value="{{ src }}"><input type="hidden" name="a" value="{{ value }}"><input type="hidden" name="b" value="{{ l.other }}"><input type="hidden" name="back" value="{{ request.url.path }}">
-      <button class="quiet" name="action" value="{{ 'accept' if l.rejected else 'reject' }}" onclick="event.stopPropagation()">{{ 'Restore' if l.rejected else 'Not the same' }}</button></form>{% endif %}
-  </a>{% endfor %}</div>
+      <button class="quiet" name="action" value="{{ 'accept' if l.rejected else 'reject' }}">{{ 'Restore' if l.rejected else 'Not the same' }}</button></form>{% endif %}
+  </div>{% endfor %}</div>
 {% endif %}
 
 {% if n_designs >= 2 %}
-<details class="fold" id="places"{% if request.query_params.get('place_min') or request.query_params.get('place_d') %} open{% endif %}>
-  <summary><h2>Places by design {{ help('contrast') }}</h2><span class="foldsum">{%- if not contrast -%}No place of publication known
-{%- else -%}{{ contrast.designs|length }} designs · {{ contrast.n_flagged }} pair{{ '' if contrast.n_flagged == 1 else 's' }} printed in different places{%- endif -%}</span><span class="foldbtn" aria-hidden="true"></span></summary>
-  <div class="foldbody">
+<section id="places">
+<h2>Places by design {{ help('contrast') }}</h2>
 {% if not contrast %}
 <p class="note">No place of publication is known for these books.</p>
 {% else %}
-<p class="note">Where the books carrying each {{ 'design' if level == 'superclass' else ('variant' if level == 'subclass' else 'linked cluster') }} were printed. Two blocks of one design printed in different places point to a copy rather than a lent block. Contrast is the total-variation distance between two rows; designs with fewer than {{ pparams.min_books }} placed books are not compared.</p>
-<table class="placetable">
-  <thead><tr><th></th><th>{{ 'Design' if level == 'superclass' else ('Variant' if level == 'subclass' else 'Cluster') }}</th>
-    {% for k, name in contrast.places %}<th class="num">{{ name }}</th>{% endfor %}<th class="num">Books placed</th></tr></thead>
-  <tbody>{% for d in contrast.designs %}
-  <tr class="{{ 'dim' if d.n_known < pparams.min_books }}">
-    <td class="mini">{% if d.exemplar %}<a href="{{ class_url(src, d.level, d.url_value) }}"><img loading="lazy" src="{{ crop_url(d.exemplar) }}" alt=""></a>{% endif %}</td>
-    <td><a href="{{ class_url(src, d.level, d.url_value) }}">{{ class_label(src, d.level, d.url_value) }}</a></td>
-    {% for k, name in contrast.places %}{% set v = d.dist.get(k, 0) %}<td class="num {{ 'hot' if v >= 0.5 }}">{{ pct(v) if v else '·' }}</td>{% endfor %}
-    <td class="num">{{ d.n_known }}<span class="muted"> / {{ d.n_books }}</span></td>
-  </tr>{% endfor %}</tbody>
-</table>
-{% if not contrast.pairs %}
-<p class="note">Too few placed books to compare designs ({{ contrast.n_eligible }} design{{ '' if contrast.n_eligible == 1 else 's' }} with at least {{ pparams.min_books }}); lower the minimum below.</p>
-{% else %}
-<h3>Pairs that differ most</h3>
-<div class="pairs">{% for p in contrast.pairs[:8] %}{% set A = contrast_ex[p.a] %}{% set B = contrast_ex[p.b] %}
-  <div class="pairrow {{ 'flag' if p.flagged }}">
-    <a href="{{ class_url(src, A.level, A.url_value) }}"><img loading="lazy" src="{{ crop_url(A.exemplar) if A.exemplar else '' }}" alt=""><span>{{ class_label(src, A.level, A.url_value) }}<br><i>{{ A.top_name or '?' }}</i></span></a>
-    <div class="pd"><b>{{ '%.2f'|format(p.d) }}</b>{% if p.flagged %}<span class="verdict later">different places — possibly a copy</span>{% else %}<span class="verdict undated">similar mix</span>{% endif %}<a class="small" href="{{ p.compare }}">Compare side by side</a></div>
-    <a href="{{ class_url(src, B.level, B.url_value) }}"><img loading="lazy" src="{{ crop_url(B.exemplar) if B.exemplar else '' }}" alt=""><span>{{ class_label(src, B.level, B.url_value) }}<br><i>{{ B.top_name or '?' }}</i></span></a>
+<p class="note">Where the books carrying each {{ 'design' if level == 'superclass' else ('variant' if level == 'subclass' else 'linked cluster') }} were printed. Two blocks of one design printed in different places point to a copy rather than a shared block.</p>
+<div class="dm-legend">{% for k, name in contrast.places %}<span><i class="sw" data-i="{{ loop.index0 }}"></i>{{ name }}</span>{% endfor %}<span><i class="sw sw-other"></i>other</span></div>
+<div class="dm-rows">
+{% for d in contrast.designs %}
+  <div class="dm-row {{ 'dim' if d.n_known < pparams.min_books }}">
+    <a class="dm-img" href="{{ class_url(src, d.level, d.url_value) }}">{% if d.exemplar %}<img loading="lazy" src="{{ crop_url(d.exemplar) }}" alt="">{% endif %}</a>
+    <a class="dm-label" href="{{ class_url(src, d.level, d.url_value) }}">{{ class_label(src, d.level, d.url_value) }}</a>
+    <span class="stackbar" title="{% for b in d.bars %}{{ b.name }} {{ pct(b.v) }}{{ ' · ' if not loop.last }}{% endfor %}">
+      {% for b in d.bars %}<span data-i="{{ b.i }}" style="width:{{ (100 * b.v)|round(2) }}%"></span>{% endfor %}{% if d.other > 0.001 %}<span class="sw-other" style="width:{{ (100 * d.other)|round(2) }}%"></span>{% endif %}
+    </span>
+    <span class="dm-n">{% if d.top_name %}{{ d.top_name }} {{ pct(d.top_share) }}{% else %}–{% endif %} <small>{{ d.n_known }} / {{ d.n_books }} books placed</small></span>
+  </div>
+{% endfor %}
+</div>
+{% set flagged = contrast.pairs|selectattr('flagged')|list %}
+{% if flagged %}
+<h3>Worth comparing</h3>
+<div class="pairs">{% for p in flagged[:6] %}{% set A = contrast_ex[p.a] %}{% set B = contrast_ex[p.b] %}
+  <div class="pairrow flag">
+    <a href="{{ class_url(src, A.level, A.url_value) }}"><img loading="lazy" src="{{ crop_url(A.exemplar) if A.exemplar else '' }}" alt=""><span>{{ class_label(src, A.level, A.url_value) }}<br><i>mostly {{ A.top_name or '?' }}</i></span></a>
+    <div class="pd" title="contrast {{ '%.2f'|format(p.d) }}"><span class="verdict">printed in different places</span><a class="small" href="{{ p.compare }}">Compare side by side</a></div>
+    <a href="{{ class_url(src, B.level, B.url_value) }}"><img loading="lazy" src="{{ crop_url(B.exemplar) if B.exemplar else '' }}" alt=""><span>{{ class_label(src, B.level, B.url_value) }}<br><i>mostly {{ B.top_name or '?' }}</i></span></a>
   </div>{% endfor %}</div>
+{% elif not contrast.pairs %}
+<p class="note">Too few placed books to compare designs ({{ contrast.n_eligible }} with at least {{ pparams.min_books }}).</p>
 {% endif %}
-<form class="controls" method="get" action="#places">
+<details class="settings"><summary>Settings</summary>
+<form class="controls" method="get" action="{{ request.url.path }}#places">
   <input type="hidden" name="order" value="{{ order }}">
   <label>Books with a place, at least <span class="range"><input type="range" name="place_min" min="2" max="40" step="1" value="{{ pparams.min_books }}"><output>{{ pparams.min_books }}</output></span></label>
   <label>Contrast counted as different <span class="range"><input type="range" name="place_d" min="0.1" max="1" step="0.05" value="{{ pparams.d }}"><output>{{ pparams.d }}</output></span></label>
   <button class="quiet">Apply</button>
 </form>
-{% endif %}
-  </div>
 </details>
+{% endif %}
+</section>
 {% endif %}
 
 {% if xref %}
@@ -173,9 +178,9 @@
 
   <h2 id="images">All images <small>{{ "{:,}".format(row.n) }}</small></h2>
   {% if filt %}<p class="filterchip">Only images {{ filt.label }} — {{ "{:,}".format(filt.n) }} image{{ '' if filt.n == 1 else 's' }} in {{ filt.n_books }} book{{ '' if filt.n_books == 1 else 's' }} <a href="{{ filt.clear }}" aria-label="Show all images" title="Show all images">×</a></p>{% endif %}
-  {% if level in ('superclass', 'subclass') and not filt %}
-  <nav class="tabs"><a class="{{ 'on' if order == 'year' }}" href="?order=year">By year</a>
-    <a class="{{ 'on' if order == 'group' }}" href="?order=group">By {{ 'subclass' if level == 'superclass' else 'variant' }}</a></nav>
+  {% if level in ('superclass', 'subclass') and not filt and 'subclass' in spec.levels %}
+  <nav class="tabs"><a class="{{ 'on' if order == 'year' }}" href="?order=year#images">By year</a>
+    <a class="{{ 'on' if order == 'group' }}" href="?order=group#images">By {{ 'subclass' if level == 'superclass' else 'variant' }}</a></nav>
   {% else %}<p class="note">Oldest first: a block's wear appears in date order.</p>{% endif %}
   <div class="gallery">
     {% set ns = namespace(g='__none__') %}
@@ -183,6 +188,7 @@
       {% if order == 'group' and o.grp != ns.g %}{% set ns.g = o.grp %}
         <div class="grp-head">{{ (o.subclass ~ o.variant) if level == 'subclass' and o.variant else (o.grp or 'no ' ~ ('subclass' if level == 'superclass' else 'variant')) }}</div>{% endif %}
       {{ othumb(o, 'book') }}
+    {% else %}<p class="muted">No images match.</p>
     {% endfor %}
   </div>
   {{ pagerbar(pager, page_no, base) }}

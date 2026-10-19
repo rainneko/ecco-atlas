@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import srcboxes, sorth %}
+{% from "_macros.html" import srcboxes, sorth, help %}
 {% block title %}Publishers and printers · {{ cfg.SITE_TITLE }}{% endblock %}
 {% block body %}
 <h1>Publishers and printers</h1>
@@ -8,12 +8,13 @@
   <div class="searchbar"><input name="q" value="{{ q }}" placeholder="Surname, e.g. tonson"><button>Search</button></div>
   {{ srcboxes(avail, sel) }}
 </form>
+<p class="note"><b>Blocks used</b>: blocks found in any book that names the house. <b>Main house of</b>: blocks whose books name this house more often than any other house {{ help('owner') }}. Both describe imprints, not ownership.</p>
 {% set base = '/agents?q=' ~ (q|urlencode) ~ ('&' ~ sq if sq else '') %}
 <table>
   <thead><tr>{{ sorth('House', 'name', sort, desc, base) }}<th>Role</th>
     {{ sorth('Books', 'books', sort, desc, base, 'num') }}
-    {{ sorth('Plates used', 'plates', sort, desc, base, 'num') }}
-    {{ sorth('Plates owned', 'owned', sort, desc, base, 'num') }}</tr></thead>
+    {{ sorth('Blocks used', 'plates', sort, desc, base, 'num') }}
+    {{ sorth('Main house of', 'owned', sort, desc, base, 'num') }}</tr></thead>
   <tbody>{% for r in rows %}
   <tr><td><a href="/agent/{{ r.name }}{{ '?' ~ sq if sq }}">{{ r.display_name or r.name }}</a> <span class="muted small">{{ r.name }}</span></td>
     <td class="small muted">{{ (r.roles or '').replace(',', ', ') }}</td>

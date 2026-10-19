@@ -19,6 +19,13 @@ CROP_PAD = float(os.environ.get("CROP_PAD", "0.04"))   # keep 4% margin: chips a
 WIDTHS = (300, 900, 1400)          # every requested width snaps up to one of these
 STORE_FULL_W = 1400                # annotated crops stored at native size up to this
 HTTP_TIMEOUT = float(os.environ.get("HTTP_TIMEOUT", "30"))
+
+# v2.5: be gentle with the image server (it belongs to a colleague). Per web worker.
+IMAGE_MAX_PARALLEL = int(os.environ.get("IMAGE_MAX_PARALLEL", "3"))
+IMAGE_MAX_RPS = float(os.environ.get("IMAGE_MAX_RPS", "3"))
+IMAGE_ROUTE_TIMEOUT = float(os.environ.get("IMAGE_ROUTE_TIMEOUT", "20"))
+THUMB_STORE = os.environ.get("THUMB_STORE", "1") != "0"   # keep every 300 px crop in Postgres
+
 HERO_IMAGE = "hero.jpg"            # optional, app/static/hero.jpg
 HERO_CREDIT = os.environ.get(
     "HERO_CREDIT", "Printing house. Diderot & d'Alembert, Encyclopédie, Recueil de planches, vol. VII")
@@ -34,9 +41,6 @@ KIND_LABEL = {"DI": "Decorated initial", "FT": "Factotum", "HP": "Headpiece",
 KIND_COLOR = {"DI": "#e8833a", "FT": "#e3c41e", "HP": "#4a9d5f", "TP": "#3d7ea6"}
 
 # ---------------------------------------------------------------- data sources
-# One entry per CSV family. Order = display order and load order within a family.
-#   family: "ann" (human annotation) or "pred" (machine cluster)
-#   levels: class levels this source exposes; pred sources always have ["cluster"]
 SOURCES = {
     "HP-ann": dict(kind="HP", family="ann", label="HP annotation",
                    levels=["superclass", "subclass", "variant"],
@@ -79,6 +83,26 @@ LENDING_DEFAULTS = dict(owner=0.70, lo=0.05, hi=0.20, min_books=5, gap=5)
 SIM_SCORES = {"variant": 1.00, "subclass": 0.98, "superclass": 0.90, "cluster": 0.95}
 TONSON_KEYS = ("tonson", "watts")
 NOISE_CLUSTERS = {"-1", ""}        # cluster ids that mean "not clustered"
+SIMILAR_MAX_PLATE_BOOKS = 500      # plates in more books do not count for "similar books"
+
+# v2.5 (DESIGN §4.5): names that acted as trade publishers, by surname key, with the
+# years in which they did so: {"surname": (first_year or None, last_year or None)}.
+# Agent keys are surname-only, so the years keep e.g. a later Cooper from matching.
+# TO BE FILLED IN BY THE TEAM FROM THE LITERATURE; it ships empty on purpose.
+TRADE_PUBLISHERS: dict[str, tuple] = {
+    # "roberts": (None, None),
+}
+# Show the unusual-imprint page to everyone (1) or to logged-in admins only (0).
+UNUSUAL_IMPRINTS_PUBLIC = os.environ.get("UNUSUAL_IMPRINTS_PUBLIC", "1") != "0"
+# Explanations an admin can record for an unusual-imprint case (DESIGN §4.5).
+REVIEW_EXPLANATIONS = [
+    ("trade", "Trade publisher"),
+    ("printer", "Same printer, other bookseller"),
+    ("reissue", "Reissue or sale of stock"),
+    ("copy", "Copied block"),
+    ("unexplained", "Unexplained"),
+    ("error", "Data error"),
+]
 
 # ---------------------------------------------------------------- admin
 SECRET_KEY = os.environ.get("SECRET_KEY", "dev-only-change-me")
@@ -89,8 +113,7 @@ SESSION_MAX_AGE = 8 * 3600
 
 BASE_DIR = Path(__file__).resolve().parent
 
-# ------------------------------------------------------------------ v2.1: text
-# Front-page scope sentence (DESIGN §13.1). Numbers are added from the database.
+# ------------------------------------------------------------------ text
 SCOPE_SENTENCE = os.environ.get("SCOPE_SENTENCE") or (
     "Every page of Eighteenth Century Collections Online — some 200,000 books and "
     "33 million pages, the most complete collection of eighteenth-century printing in "
@@ -98,7 +121,6 @@ SCOPE_SENTENCE = os.environ.get("SCOPE_SENTENCE") or (
 
 # Tooltip glossary (DESIGN §13.2): key -> (short text for the hover card, /about anchor)
 GLOSSARY = {
-    # key -> (the hover text: what you are looking at, in plain words; anchor on /about)
     "DI": ("Decorative initial: a large decorated letter that opens a section of text.", "term-DI"),
     "FT": ("Factotum: a decorative frame with a blank centre, into which any letter could "
            "be set.", "term-FT"),
@@ -107,31 +129,34 @@ GLOSSARY = {
     "TP": ("Tailpieces and printers' devices, counted as one type here. A tailpiece closes "
            "a chapter; a device is the printer's emblem, usually on the title page.",
            "term-TP"),
-    "plate": ("One physical woodblock, as far as we can tell: a human variant such as "
-              "C067_01a, or one machine cluster. Ownership and lending are worked out per "
-              "plate.", "term-plate"),
+    "plate": ("One physical block, as far as we can tell: a human variant such as "
+              "C067_01a, or one machine cluster. The imprint analysis is worked out per "
+              "block.", "term-plate"),
     "cluster": ("A group of images the model judged to come from the same design. Machine "
                 "output, not checked by a person.", "term-cluster"),
     "superclass": ("Designs that share a motif, e.g. C067. One superclass usually holds "
                    "several blocks.", "term-superclass"),
     "subclass": ("One design, e.g. C067_01. Its variants (a, b, …) are separate blocks of "
                  "that design.", "term-subclass"),
-    "coverage": ("Percentages: of this class's books with a known imprint, how many name "
-                 "the house. A book can name several houses, so they can add up to more "
-                 "than 100%.", "term-coverage"),
-    "credit": ("The bar: each house's share of all names on the imprints; it adds up to "
-               "100%.", "term-credit"),
-    "owner": ("The house named in most of a plate's books (by default at least 70%).",
-              "term-owner"),
-    "borrower": ("A house named in only a few of a plate's books, and never together with "
-                 "the owner — the block may have been lent to it.", "term-borrower"),
+    "coverage": ("The share of this class's books that name the house, counting only books "
+                 "that name a publisher (or, for printers, a printer). A book can name "
+                 "several houses, so the shares can add up to more than 100%.",
+                 "term-coverage"),
+    "credit": ("Each house's share of all names on the imprints; it adds up to 100%. No "
+               "longer drawn on class pages.", "term-credit"),
+    "owner": ("Main house: the house named in most of the books that carry this block (by "
+              "default at least 70%). An association in imprints, not proof of who owned "
+              "the block.", "term-owner"),
+    "borrower": ("Other house: a house named in only a few of a block's books, and never "
+                 "together with the main house. Trade publishers, a shared printer, a sale "
+                 "of stock, reissues and copied blocks can all produce this.", "term-borrower"),
     "imprint": ("Who published and printed the book, as the title page says (from ESTC). "
                 "Names are reduced to surnames, so 'Tonson, J.' and 'J. and R. Tonson' are "
                 "one house.", "term-imprint"),
     "strip": ("Each dot is a page with an ornament of that type; hover to preview, click to "
               "open.", "term-strip"),
-    "T": ("Tonson or Watts hold the largest share of this plate (or, on a book, the "
-          "imprint names them).", "term-T"),
+    "T": ("Tonson or Watts are the house named most often in this block's books (or, on a "
+          "book, the imprint names them).", "term-T"),
     "place_share": ("Where this class's books were printed. A book has one place, so the "
                     "slices add up to 100%. Click a place to compare its images with the "
                     "others.", "term-place_share"),
@@ -191,7 +216,6 @@ PUBLICATIONS = [
 }"""),
 ]
 
-# Fill in the addresses (DESIGN §13.3). An empty email renders the name without a link.
 PEOPLE = [
     dict(name="Ruilin Wang", role="doctoral researcher, computer vision and the atlas", email=""),
     dict(name="Lidia Pivovarova", role="supervisor, machine learning", email=""),
@@ -200,38 +224,37 @@ PEOPLE = [
 ]
 GROUP = "Helsinki Computational History Group (COMHIS), University of Helsinki"
 
-# ------------------------------------------------------------------ v2.1: image search (§9)
-EMBED_MODEL = os.environ.get("EMBED_MODEL", "")        # "" = the newest in model_store
-EMBED_INDEX = os.environ.get("EMBED_INDEX", "centroid")  # or "full" (exhaustive)
-EMBED_FAKE = os.environ.get("EMBED_FAKE", "") == "1"    # tests only: no torch needed
-# Query preprocessing per type, overridden by what embedding_model recorded at load time.
+# ------------------------------------------------------------------ image search (§9)
+EMBED_MODEL = os.environ.get("EMBED_MODEL", "")
+EMBED_INDEX = os.environ.get("EMBED_INDEX", "centroid")
+EMBED_FAKE = os.environ.get("EMBED_FAKE", "") == "1"
 EMBED_INPUT = {"HP": (100, 400), "DI": (200, 200), "FT": (200, 200), "TP": (200, 200)}
-EMBED_CROP = "full"          # "full" = plain resize to the input size (default since 2026-09-19);
-                             # "square" = the old docret eval transform (centre square crop)
-KIND_SAMPLE_N = 300          # ornaments per type for the type check
-KIND_KNN = 10                # neighbours averaged per type
-MATCH_TOP_CLASSES = 25       # centroids kept per family before the exact pass
-MATCH_MIN_SIM = 0.50         # classes below this do not vote for houses
+EMBED_CROP = "full"
+KIND_SAMPLE_N = 300
+KIND_KNN = 10
+MATCH_TOP_CLASSES = 25
+MATCH_MIN_SIM = 0.50
 QUERY_TTL_HOURS = 24
 QUERY_MAX_BYTES = 8 * 1024 * 1024
 QUERY_MAX_SIDE = 1600
+QUERY_MAX_PIXELS = 40_000_000
 
-# ------------------------------------------------------------------ v2.1: places and reprints (§12)
-PLACE_DEFAULTS = {"min_books": 5, "d": 0.6}   # books with a known place per design; contrast flag
-PAIR_MIN_SHARED = 3          # plates two books must share to be a pair (§12.4)
-PAIR_MAX_PLATE_BOOKS = 30    # plates in more books than this do not generate pairs
-LINK_MIN_SIM = 0.85          # default threshold of etl.link_clusters (§12.6)
-LINK_MAX_GROUP = 40          # clusters shown as one linked group at most
+# ------------------------------------------------------------------ places and reprints (§12)
+PLACE_DEFAULTS = {"min_books": 5, "d": 0.6}
+PAIR_MIN_SHARED = 3
+PAIR_MAX_PLATE_BOOKS = 30
+PAIR_THUMBS = 3              # shared-block thumbnails per pair on /reprints (v2.5)
+LINK_MIN_SIM = 0.85
+LINK_MAX_GROUP = 40
 
-# ------------------------------------------------------------------ v2.4: navigation (DESIGN §8)
-# (label, default href, active path prefixes, menu items [(title, href, description)])
+# ------------------------------------------------------------------ navigation (DESIGN §8)
 NAV = [
     ("Books", "/books", ("/book",), []),
     ("Ornaments", "/classes", ("/class",), []),
     ("Publishers & printers", "/agents", ("/agent",), []),
     ("Reprints", "/reprints", ("/reprints", "/lending"), [
         ("Book pairs", "/reprints", "Books that share several blocks, across places"),
-        ("Lending", "/lending", "Blocks used by a house other than their owner"),
+        ("Unusual imprints", "/lending", "Books where a block appears without its usual house"),
     ]),
     ("Compare", "/compare", ("/compare", "/search"), [
         ("Compare ornaments", "/compare", "Two sets of ornaments side by side"),

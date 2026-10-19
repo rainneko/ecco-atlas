@@ -11,11 +11,11 @@
       <option value="{{ o.src }}:{{ o.level }}" {{ 'selected' if tax == o.src ~ ':' ~ o.level }}>{{ o.label }} ({{ "{:,}".format(o.n) }})</option>{% endfor %}
     </optgroup>{% endfor %}
   </select>
-  <input name="q" value="{{ q }}" placeholder="Filter by id or name, e.g. C067 or eagle">
+  <input name="q" value="{{ q }}" placeholder="Filter by id or name, e.g. C067, C067_01a or eagle">
   <button>Show</button>
 </form>
 {% if tax %}
-<p class="note">{{ "{:,}".format(total) }} {{ level }}{{ 'es' if level in ('superclass','subclass') else 's' }}{% if level == 'cluster' and hc %} (column {{ hc }}){% endif %}. Click a column heading to sort. <span class="tag t-own">T</span> marks plates whose largest holder is Tonson or Watts{{ help('T') }}.</p>
+<p class="note">{{ "{:,}".format(total) }} {{ level }}{{ 'es' if level in ('superclass','subclass') else 's' }}{% if level == 'cluster' and hc %} (column {{ hc }}){% endif %}. Click a column heading to sort. <span class="tag t-own">T</span> marks blocks whose books name Tonson or Watts most often{{ help('T') }}.</p>
 <table>
   <thead><tr><th></th>
     {{ sorth(level|capitalize, 'name', sort, desc, sort_base) }}
@@ -30,7 +30,7 @@
   <tr>
     <td class="mini"><a href="{{ class_url(src, level, r.value) }}"><img loading="lazy" src="{{ crop_url(r.exemplar) }}" alt=""></a></td>
     <td style="min-width:13em">{{ kdot(r.kind) }}<a href="{{ class_url(src, level, r.value) }}">{{ class_label(src, level, r.value) }}</a>
-      {% if r.t_owned %}<span class="tag t-own" title="Tonson or Watts hold the largest share">T</span>{% endif %}
+      {% if r.t_owned %}<span class="tag t-own" title="Tonson or Watts are named most often in this block's books">T</span>{% endif %}
       {% if r.name %}<div class="small name">{{ humanize(r.name) }}</div>
       {% elif r.parent_name %}<div class="small muted">in {{ humanize(r.parent_name) }}</div>{% endif %}</td>
     <td class="num">{{ "{:,}".format(r.n) }}</td><td class="num">{{ "{:,}".format(r.n_books) }}</td>

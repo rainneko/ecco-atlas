@@ -9,6 +9,9 @@ stores every pair at or above --min-sim (at most --top per cluster) in
 `cluster_link`. Prints the distribution of each cluster's best match so the
 threshold can be chosen from the data. Rejections made by admins (the
 `rejected` flag) survive reruns.
+
+v2.5: blocks of 256 rows (was 2,000: about 2 GB peak with 61k HP centroids,
+enough to stop the web pod it runs in). --block changes it.
 """
 from __future__ import annotations
 
@@ -26,7 +29,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from app import config  # noqa: E402
 
 
-def link_source(conn, src, min_sim, top, block=2000):
+def link_source(conn, src, min_sim, top, block=256):
     cur = conn.cursor()
     cur.execute("SELECT value, n, vec FROM cluster_centroid WHERE src = %s ORDER BY value", (src,))
     rows = cur.fetchall()
@@ -57,6 +60,7 @@ def link_source(conn, src, min_sim, top, block=2000):
                     pairs.append((src, values[i], values[j], float(S[k, j]), ns[i], ns[j]))
                 elif j < i and S[k, j] >= min_sim and top:
                     pairs.append((src, values[j], values[i], float(S[k, j]), ns[j], ns[i]))
+        del S
     pairs = list({(p[1], p[2]): p for p in pairs}.values())
     cur.execute("SELECT a, b FROM cluster_link WHERE src = %s AND rejected", (src,))
     rejected = set(cur.fetchall())
@@ -82,13 +86,14 @@ def main():
                     choices=[s for s, v in config.SOURCES.items() if v["family"] == "pred"])
     ap.add_argument("--min-sim", type=float, default=config.LINK_MIN_SIM)
     ap.add_argument("--top", type=int, default=10, help="max links per cluster (0 = all)")
+    ap.add_argument("--block", type=int, default=256, help="rows per block (memory ~ block × N × 8 bytes)")
     ap.add_argument("--dsn", default=os.environ.get("DATABASE_URL"))
     a = ap.parse_args()
     if not a.dsn:
         sys.exit("set DATABASE_URL or pass --dsn")
     conn = psycopg2.connect(a.dsn)
     srcs = a.src or [s for s, v in config.SOURCES.items() if v["family"] == "pred"]
-    total = sum(link_source(conn, s, a.min_sim, a.top) for s in srcs)
+    total = sum(link_source(conn, s, a.min_sim, a.top, max(16, a.block)) for s in srcs)
     print(f"stored {total:,} links")
 
 
