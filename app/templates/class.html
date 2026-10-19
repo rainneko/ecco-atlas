@@ -25,26 +25,45 @@
       {% if row.plate_key %}<span><b>One block</b>{{ help('plate') }}</span>{% endif %}
     </div>
     <div class="inline">
-      <a class="btn quiet" href="#images">Images</a>
-      <a class="btn quiet" href="{{ compare_url }}">Compare with…</a>
-      {% if has_coords %}<a class="btn quiet" href="#map" data-open-map>Map through time</a>{% else %}<span class="btn quiet disabled" title="No book of this class has coordinates yet">No coordinates loaded</span>{% endif %}
+            <a class="btn quiet" href="{{ compare_url }}">Compare with…</a>
+      {% if has_coords %}<a class="btn quiet" href="{{ curl }}?tab=places#map"{% if tab == 'places' %} data-open-map{% endif %}>Map through time</a>{% else %}<span class="btn quiet disabled" title="No book of this class has coordinates yet">No coordinates loaded</span>{% endif %}
       {% if admin and level in ('superclass', 'subclass', 'cluster') %}<a class="btn quiet" href="/admin/workbench/{{ src }}/{{ level }}/{{ value }}">Open in the workbench</a>{% endif %}
     </div>
   </div>
   <img src="{{ crop_url(row.exemplar, 900) }}" alt="Typical image of {{ title }}">
 </div>
 
+
+<nav class="classtabs" aria-label="Sections of this class page" data-tab="{{ tab }}" data-url="{{ curl }}">
+  {% for t in tabs %}<a href="{{ curl }}?tab={{ t.key }}" class="{{ 'on' if t.on }}"{% if t.on %} aria-current="page"{% endif %}>{{ t.label }}{% if t.n %} <small>{{ "{:,}".format(t.n) }}</small>{% endif %}</a>{% endfor %}
+</nav>
+
+<div class="classtab">
+{% if tab == 'images' %}
+<h2 id="images" class="sr">Images</h2>
+{% if filt %}<p class="filterchip">Only images {{ filt.label }} — {{ "{:,}".format(filt.n) }} image{{ '' if filt.n == 1 else 's' }} in {{ filt.n_books }} book{{ '' if filt.n_books == 1 else 's' }} <a href="{{ filt.clear }}" aria-label="Show all images" title="Show all images">×</a></p>{% endif %}
+{% if level in ('superclass', 'subclass') and not filt and 'subclass' in spec.levels %}
+<nav class="tabs"><a class="{{ 'on' if order == 'year' }}" href="?order=year">By year</a>
+  <a class="{{ 'on' if order == 'group' }}" href="?order=group">By {{ 'subclass' if level == 'superclass' else 'variant' }}</a>
+  <span class="note">Click an image to enlarge it; ← and → move through the images in this order.</span></nav>
+{% else %}<p class="note">Oldest first: a block's wear appears in date order. Click an image to enlarge it; ← and → move through the images.</p>{% endif %}
+<div class="gallery" data-lightbox>
+  {% set ns = namespace(g='__none__') %}
+  {% for o in members %}
+    {% if order == 'group' and o.grp != ns.g %}{% set ns.g = o.grp %}
+      <div class="grp-head">{{ (o.subclass ~ o.variant) if level == 'subclass' and o.variant else (o.grp or 'no ' ~ ('subclass' if level == 'superclass' else 'variant')) }}</div>{% endif %}
+    {{ othumb(o, 'book') }}
+  {% else %}<p class="muted">No images match.</p>
+  {% endfor %}
+</div>
+{{ pagerbar(pager, page_no, base) }}
+
+{% elif tab == 'houses' %}
 <h2 id="houses">Who used it {{ help('coverage') }}</h2>
-<p class="note">Each bar is the share of books that name the house. A book can name several houses, so the shares can add up to more than 100%. Imprints usually name the bookseller first and often omit the printer, who normally held the block. Click a house or a place to compare its images with the rest.</p>
-<div class="panels three">
+<p class="note">Each bar is the share of books that name the house. A book can name several houses, so the shares can add up to more than 100%. Imprints usually name the bookseller first and often omit the printer, who normally held the block. Click a house to compare its images with those of the other houses.</p>
+<div class="panels">
   <section class="panel"><h3>Publishers</h3>{{ hbars(comp.publisher, n_known.publisher, 'publisher', owners, borrowers, house_menus) }}</section>
   <section class="panel"><h3>Printers</h3>{{ hbars(comp.printer, n_known.printer, 'printer', owners, borrowers, house_menus) }}</section>
-  <section class="panel"><h3>Where it was printed {{ help('place_share') }}</h3>
-    {% if places.n_known %}
-    {{ pie(places.slices, place_menus, places.n_known) }}
-    <p class="note">{{ places.n_known }} of {{ places.n_books }} books have a known place{% if places.n_books > places.n_known %}; {{ places.n_books - places.n_known }} do not{% endif %}.</p>
-    {% else %}<p class="muted small">No place of publication is known for these books.</p>{% endif %}
-  </section>
 </div>
 
 {% if lane %}
@@ -79,9 +98,26 @@
   {% endif %}
 </section>
 {% elif not row.plate_key and level in ('superclass', 'subclass') %}
-<p class="note">Imprint comparisons are made per block; open one of the {{ 'designs' if level == 'superclass' else 'variants' }} below.</p>
+<p class="note">Imprint comparisons are made per block; open one of the {{ 'designs' if level == 'superclass' else 'variants' }} under <a href="{{ curl }}?tab=designs">Designs</a>.</p>
 {% endif %}
 
+
+{% elif tab == 'places' %}
+<h2 id="where">Where it was printed {{ help('place_share') }}</h2>
+<div class="panels">
+  <section class="panel">
+    {% if places.n_known %}
+    {{ pie(places.slices, place_menus, places.n_known) }}
+    <p class="note">{{ places.n_known }} of {{ places.n_books }} books have a known place{% if places.n_books > places.n_known %}; {{ places.n_books - places.n_known }} do not{% endif %}.</p>
+    {% else %}<p class="muted small">No place of publication is known for these books.</p>{% endif %}
+  </section>
+  <section class="panel"><h3>When</h3>
+    <p class="meta"><span><b>First</b>{{ row.y0 or '?' }}</span><span><b>Last</b>{{ row.y1 or '?' }}</span><span><b>Books</b>{{ "{:,}".format(row.n_books) }}</span></p>
+    {% if has_coords %}<p><button type="button" class="quiet" data-open-map>Show the map through time</button></p>
+    <p class="note">The map shows where the design is found year by year, and where it is found next.</p>
+    {% else %}<p class="note">No book of this class has coordinates yet, so the map is not available.</p>{% endif %}
+  </section>
+</div>
 {% if has_coords %}
 <section id="map" class="geomap" data-key="{{ class_key }}" data-v="{{ asset_v }}" hidden aria-labelledby="map-h">
   <h2 id="map-h">Map through time {{ help('place_share') }}</h2>
@@ -96,19 +132,20 @@
 </section>
 {% endif %}
 
-{% if level == 'cluster' and links %}
-<h2>Related clusters <small>centroid similarity</small></h2>
-<p class="note">Clusters whose average embedding is close to this one. Together they act as one design for the place comparison below.</p>
-<div class="sibs">{% for l in links %}
-  <div class="sib {{ 'rej' if l.rejected }}">
-    <a href="{{ class_url(src, 'cluster', l.other) }}"><img loading="lazy" src="{{ crop_url(l.exemplar) if l.exemplar else '' }}" alt=""></a>
-    <a href="{{ class_url(src, 'cluster', l.other) }}"><b>{{ spec.kind }}-{{ l.other }} <span class="muted">{{ '%.2f'|format(l.sim) }}</span></b></a>
-    <span class="muted">{{ l.n or '?' }} images, {{ l.y0 or '?' }}–{{ l.y1 or '?' }}{% if l.rejected %} · rejected{% endif %}</span>
-    {% if admin %}<form method="post" action="/admin/link" class="inline"><input type="hidden" name="src" value="{{ src }}"><input type="hidden" name="a" value="{{ value }}"><input type="hidden" name="b" value="{{ l.other }}"><input type="hidden" name="back" value="{{ request.url.path }}">
-      <button class="quiet" name="action" value="{{ 'accept' if l.rejected else 'reject' }}">{{ 'Restore' if l.rejected else 'Not the same' }}</button></form>{% endif %}
-  </div>{% endfor %}</div>
-{% endif %}
 
+{% elif tab == 'designs' %}
+{% set side = struct.side %}
+{% if struct.children or struct.siblings %}
+<h2>{{ 'Designs in this superclass' if level == 'superclass' else ('Variants of this design' if level == 'subclass' else 'Other variants of this design') }}</h2>
+<div class="sibs">
+  {% for s in (struct.children or struct.siblings) %}
+  <a class="sib {{ 'on' if s.value == value }}" href="{{ class_url(src, s.level, s.value) }}">
+    <img loading="lazy" src="{{ crop_url(s.exemplar) }}" alt="">
+    <b>{{ class_label(src, s.level, s.value) }}{% if s.t_owned %} <span class="tag t-own">T</span>{% endif %}</b>
+    <span class="muted">{{ s.n }} image{{ "" if s.n == 1 else "s" }}, {{ s.y0 or '?' }}–{{ s.y1 or '?' }}</span>
+  </a>{% endfor %}
+</div>
+{% endif %}
 {% if n_designs >= 2 %}
 <section id="places">
 <h2>Places by design {{ help('contrast') }}</h2>
@@ -143,7 +180,7 @@
 {% endif %}
 <details class="settings"><summary>Settings</summary>
 <form class="controls" method="get" action="{{ request.url.path }}#places">
-  <input type="hidden" name="order" value="{{ order }}">
+  <input type="hidden" name="tab" value="designs">
   <label>Books with a place, at least <span class="range"><input type="range" name="place_min" min="2" max="40" step="1" value="{{ pparams.min_books }}"><output>{{ pparams.min_books }}</output></span></label>
   <label>Contrast counted as different <span class="range"><input type="range" name="place_d" min="0.1" max="1" step="0.05" value="{{ pparams.d }}"><output>{{ pparams.d }}</output></span></label>
   <button class="quiet">Apply</button>
@@ -151,6 +188,28 @@
 </details>
 {% endif %}
 </section>
+{% endif %}
+
+{% if side %}
+<h2>Other designs in {{ sup }}</h2>
+<div class="sibs">{% for s in side %}
+  <a class="sib" href="{{ class_url(src, 'subclass', s.value) }}"><img loading="lazy" src="{{ crop_url(s.exemplar) }}" alt="">
+    <b>{{ s.value }}{% if s.t_owned %} <span class="tag t-own">T</span>{% endif %}</b><span class="muted">{{ s.n }} image{{ "" if s.n == 1 else "s" }}</span></a>
+{% endfor %}</div>
+{% endif %}
+
+{% elif tab == 'related' %}
+{% if level == 'cluster' and links %}
+<h2>Related clusters <small>centroid similarity</small></h2>
+<p class="note">Clusters whose average embedding is close to this one. Together they act as one design in the place comparison under <a href="{{ curl }}?tab=designs">Designs</a>.</p>
+<div class="sibs">{% for l in links %}
+  <div class="sib {{ 'rej' if l.rejected }}">
+    <a href="{{ class_url(src, 'cluster', l.other) }}"><img loading="lazy" src="{{ crop_url(l.exemplar) if l.exemplar else '' }}" alt=""></a>
+    <a href="{{ class_url(src, 'cluster', l.other) }}"><b>{{ spec.kind }}-{{ l.other }} <span class="muted">{{ '%.2f'|format(l.sim) }}</span></b></a>
+    <span class="muted">{{ l.n or '?' }} images, {{ l.y0 or '?' }}–{{ l.y1 or '?' }}{% if l.rejected %} · rejected{% endif %}</span>
+    {% if admin %}<form method="post" action="/admin/link" class="inline"><input type="hidden" name="src" value="{{ src }}"><input type="hidden" name="a" value="{{ value }}"><input type="hidden" name="b" value="{{ l.other }}"><input type="hidden" name="back" value="{{ request.url.path }}">
+      <button class="quiet" name="action" value="{{ 'accept' if l.rejected else 'reject' }}">{{ 'Restore' if l.rejected else 'Not the same' }}</button></form>{% endif %}
+  </div>{% endfor %}</div>
 {% endif %}
 
 {% if xref %}
@@ -161,48 +220,8 @@
 {% endfor %}</p>
 {% endif %}
 
-{% set side = struct.side %}
-<div class="class-body {{ '' if side else 'full' }}">
-<div>
-  {% if struct.children or struct.siblings %}
-  <h2>{{ 'Designs in this superclass' if level == 'superclass' else ('Variants of this design' if level == 'subclass' else 'Other variants of this design') }}</h2>
-  <div class="sibs">
-    {% for s in (struct.children or struct.siblings) %}
-    <a class="sib {{ 'on' if s.value == value }}" href="{{ class_url(src, s.level, s.value) }}">
-      <img loading="lazy" src="{{ crop_url(s.exemplar) }}" alt="">
-      <b>{{ class_label(src, s.level, s.value) }}{% if s.t_owned %} <span class="tag t-own">T</span>{% endif %}</b>
-      <span class="muted">{{ s.n }} image{{ "" if s.n == 1 else "s" }}, {{ s.y0 or '?' }}–{{ s.y1 or '?' }}</span>
-    </a>{% endfor %}
-  </div>
-  {% endif %}
-
-  <h2 id="images">All images <small>{{ "{:,}".format(row.n) }}</small></h2>
-  {% if filt %}<p class="filterchip">Only images {{ filt.label }} — {{ "{:,}".format(filt.n) }} image{{ '' if filt.n == 1 else 's' }} in {{ filt.n_books }} book{{ '' if filt.n_books == 1 else 's' }} <a href="{{ filt.clear }}" aria-label="Show all images" title="Show all images">×</a></p>{% endif %}
-  {% if level in ('superclass', 'subclass') and not filt and 'subclass' in spec.levels %}
-  <nav class="tabs"><a class="{{ 'on' if order == 'year' }}" href="?order=year#images">By year</a>
-    <a class="{{ 'on' if order == 'group' }}" href="?order=group#images">By {{ 'subclass' if level == 'superclass' else 'variant' }}</a></nav>
-  {% else %}<p class="note">Oldest first: a block's wear appears in date order.</p>{% endif %}
-  <div class="gallery">
-    {% set ns = namespace(g='__none__') %}
-    {% for o in members %}
-      {% if order == 'group' and o.grp != ns.g %}{% set ns.g = o.grp %}
-        <div class="grp-head">{{ (o.subclass ~ o.variant) if level == 'subclass' and o.variant else (o.grp or 'no ' ~ ('subclass' if level == 'superclass' else 'variant')) }}</div>{% endif %}
-      {{ othumb(o, 'book') }}
-    {% else %}<p class="muted">No images match.</p>
-    {% endfor %}
-  </div>
-  {{ pagerbar(pager, page_no, base) }}
-</div>
-{% if side %}
-<aside class="side">
-  <h3>Other designs in {{ sup }}</h3>
-  <div class="sibs">{% for s in side %}
-    <a class="sib" href="{{ class_url(src, 'subclass', s.value) }}"><img loading="lazy" src="{{ crop_url(s.exemplar) }}" alt="">
-      <b>{{ s.value }}{% if s.t_owned %} <span class="tag t-own">T</span>{% endif %}</b><span class="muted">{{ s.n }} image{{ "" if s.n == 1 else "s" }}</span></a>
-  {% endfor %}</div>
-</aside>
 {% endif %}
 </div>
 {% endblock %}
 
-{% block scripts %}<script src="/static/geomap.js?v={{ asset_v }}"></script>{% endblock %}
+{% block scripts %}{% if tab == 'places' %}<script src="/static/geomap.js?v={{ asset_v }}"></script>{% endif %}{% endblock %}

@@ -538,59 +538,21 @@ def legacy_class(a: str, b: str):
     raise HTTPException(404)
 
 
-@app.get("/class/{src}/{level}/{value:path}", response_class=HTMLResponse)
-def class_detail(request: Request, src: str, level: str, value: str, order: str = "year",
-                 place: str = "", agent: str = "", book: str = "",
-                 page_no: int = Query(1, alias="p", ge=1)):
-    if src in ("superclass", "subclass", "variant"):      # v1 URL
-        return RedirectResponse(class_url("HP-ann", src, f"{level}/{value}"
-                                          if src == "variant" else value), status_code=301)
-    spec = config.SOURCES.get(src)
-    if not spec or level not in spec["levels"]:
-        raise HTTPException(404, "unknown class level")
-    row = db.class_row(src, level, value)
-    if not row:
-        raise HTTPException(404, "class not found")
-    limit = 120
-    order = order if order in ("year", "group") and level in db.GROUP_COL else "year"
-    filt = None
-    book = book if book.isalnum() else ""
-    if place or agent or book:
-        members, n_filt, n_filt_books = db.class_members_filtered(
-            src, level, value, place or None, agent or None, None, limit, (page_no - 1) * limit,
-            book or None)
-        label = compare.describe(compare.Side(src, level, value, place=place, agent=agent, book=book))
-        filt = dict(label=label.split(" · ", 1)[1] if " · " in label else label, n=n_filt,
-                    n_books=n_filt_books, clear=class_url(src, level, value) + "#images")
-        order = "year"
-    else:
-        members = db.class_members(src, level, value, order, limit, (page_no - 1) * limit)
-    sup = sub = None
-    if spec["family"] == "ann":
-        if level == "superclass":
-            sup = value
-        elif level == "subclass":
-            # from the value, not from the first image: a filtered page may be empty (v2.5)
-            sup = re.sub(r"_\d+$", "", value)
-            sub = value
-        else:
-            sup, sub, _ = workbench.split_path(src, value)
-    names = db.names_for(src, [p for p in (("superclass", sup), ("subclass", sub)) if p[1]])
-    rows = db.class_book_agents(src, level, value)
-    comp, n_known = composition(rows)
-    place_mix = place_composition(rows)
-    pparams = places.Params.from_query(request.query_params)
-    contrast, group, links, prows = None, None, [], []
+# Class page tabs (v2.6, DESIGN §5.6): key, label. Each tab computes only its own data.
+CLASS_TABS = [("images", "Images"), ("houses", "Who used it"), ("places", "Where and when"),
+              ("designs", "Designs"), ("related", "Related")]
+
+
+def contrast_rows(src, level, value, group, pparams):
+    """Places by design (§12.3) for the designs below a class, or for a group of
+    linked clusters. Returns (n_designs, contrast or None, contrast_ex)."""
+    prows = []
     if level in ("superclass", "subclass"):
         prows = db.design_place_rows(src, level, value)     # [] for DI/FT (v2.5)
-    elif level == "cluster":
-        links = db.cluster_links(src, value)
-        group = db.cluster_group(src, value)
-        if len(group) > 1:
-            prows = db.cluster_group_place_rows(src, group)
+    elif level == "cluster" and group and len(group) > 1:
+        prows = db.cluster_group_place_rows(src, group)
     n_designs = len({r["design"] for r in prows})
-    if n_designs >= 2:
-        contrast = places.analyse(prows, pparams)          # None when no book has a place
+    contrast = places.analyse(prows, pparams) if n_designs >= 2 else None
     contrast_ex = {}
     if contrast:
         lv = {"superclass": "subclass", "subclass": "variant", "cluster": "cluster"}[level]
@@ -607,38 +569,123 @@ def class_detail(request: Request, src: str, level: str, value: str, order: str 
             A, B = contrast_ex[pr["a"]], contrast_ex[pr["b"]]
             pr["compare"] = compare.url(compare.Side(src, A["level"], A["url_value"]),
                                         compare.Side(src, B["level"], B["url_value"]))
-    params = lending.Params.from_query(request.query_params)
-    lend = lending.analyse_rows(rows, params) if row["plate_key"] else None
-    owners_ok = set(lend.owners) if lend and lend.eligible else set()
-    lane = swimlane(rows, owners_ok)
-    ag = db.agents_by_id({e["borrower"] for e in lend.events} | set(lend.owners)) if lend else {}
-    printer_named = db.books_naming_printer([e["book_id"] for e in lend.events]) if lend else set()
-    pages = math.ceil((filt["n"] if filt else row["n"]) / limit)
+    return n_designs, contrast, contrast_ex
+
+
+@app.get("/class/{src}/{level}/{value:path}", response_class=HTMLResponse)
+def class_detail(request: Request, src: str, level: str, value: str, order: str = "year",
+                 place: str = "", agent: str = "", book: str = "", tab: str = "images",
+                 page_no: int = Query(1, alias="p", ge=1)):
+    if src in ("superclass", "subclass", "variant"):      # v1 URL
+        return RedirectResponse(class_url("HP-ann", src, f"{level}/{value}"
+                                          if src == "variant" else value), status_code=301)
+    spec = config.SOURCES.get(src)
+    if not spec or level not in spec["levels"]:
+        raise HTTPException(404, "unknown class level")
+    row = db.class_row(src, level, value)
+    if not row:
+        raise HTTPException(404, "class not found")
     curl = class_url(src, level, value)
-    main_key = place_mix["items"][0]["key"] if place_mix["items"] else None
-    main_name = place_mix["items"][0]["place"] if place_mix["items"] else None
-    place_menus = {it["key"]: compare.place_menu(curl, src, level, value, it["key"], it["place"],
-                                                 main_key, main_name)
-                   for it in place_mix["items"]}
-    house_menus = {m["agent_id"]: compare.house_menu(curl, src, level, value, m["name"], m["display"])
-                   for role in ("publisher", "printer") for m in comp[role][:8]}
-    fq = urlencode({k: v for k, v in (("place", place), ("agent", agent), ("book", book)) if v})
-    return page(request, "class.html", src=src, level=level, value=value, spec=spec, row=row,
-                filt=filt, place_menus=place_menus, house_menus=house_menus,
-                compare_url=compare.url(compare.Side(src, level, value)),
-                has_coords=db.class_has_coords(src, level, value),
-                class_key=f"{src}:{level}:{value}",
-                n_designs=n_designs, lane=lane, printer_named=printer_named,
-                members=members, order=order, sup=sup, sub=sub, names=names,
-                comp=comp, n_known=n_known, places=place_mix, lend=lend, lend_agents=ag,
-                params=params, contrast=contrast, contrast_ex=contrast_ex, pparams=pparams,
-                group=group, links=links, owners=owners_ok,
-                borrowers=set(lend.borrowers) if lend else set(),
-                struct=db.class_structure(src, level, value, sup, sub),
-                xref=db.class_crossref(src, level, value),
-                page_no=page_no, pager=pager(page_no, pages),
-                base=class_url(src, level, value) + f"?order={order}" + (f"&{fq}" if fq else ""),
-                title=N.class_label(src, level, value))
+    book = book if book.isalnum() else ""
+    if place or agent or book:
+        tab = "images"                                     # a filter always shows images
+
+    # ---- what every tab needs (all cheap)
+    sup = sub = None
+    if spec["family"] == "ann":
+        if level == "superclass":
+            sup = value
+        elif level == "subclass":
+            # from the value, not from the first image: a filtered page may be empty (v2.5)
+            sup = re.sub(r"_\d+$", "", value)
+            sub = value
+        else:
+            sup, sub, _ = workbench.split_path(src, value)
+    names = db.names_for(src, [p for p in (("superclass", sup), ("subclass", sub)) if p[1]])
+    struct = db.class_structure(src, level, value, sup, sub)
+    links, group = [], None
+    if level == "cluster":
+        links = db.cluster_links(src, value)
+        group = db.cluster_group(src, value) if links else [value]
+    xref = db.class_crossref(src, level, value)
+    n_struct = len(struct["children"] or struct["siblings"]) + len(struct["side"])
+    shown = {"images": True, "houses": True, "places": True,
+             "designs": bool(n_struct) or bool(group and len(group) > 1),
+             "related": bool(links or xref)}
+    tab = tab if shown.get(tab) else "images"
+    tabs = [dict(key=k, label=lab, on=(k == tab),
+                 n=(row["n"] if k == "images" else n_struct if k == "designs"
+                    else len(links) + len(xref) if k == "related" else None))
+            for k, lab in CLASS_TABS if shown[k]]
+    ctx = dict(src=src, level=level, value=value, spec=spec, row=row, tab=tab, tabs=tabs,
+               curl=curl, compare_url=compare.url(compare.Side(src, level, value)),
+               has_coords=db.class_has_coords(src, level, value),
+               class_key=f"{src}:{level}:{value}", sup=sup, sub=sub, names=names,
+               struct=struct, links=links, group=group, xref=xref,
+               title=N.class_label(src, level, value),
+               # defaults, so that every tab renders without the others' data
+               members=[], filt=None, order="year", pager=[], page_no=page_no, base=curl + "?",
+               comp={"publisher": [], "printer": []}, n_known={"publisher": 0, "printer": 0},
+               lend=None, lend_agents={}, lane=None, printer_named=set(), owners=set(),
+               borrowers=set(), house_menus={}, params=lending.Params(),
+               places=dict(items=[], n_known=0, n_books=0, slices=[]), place_menus={},
+               n_designs=0, contrast=None, contrast_ex={}, pparams=places.Params())
+
+    if tab == "images":
+        limit = 120
+        order = order if order in ("year", "group") and level in db.GROUP_COL else "year"
+        filt = None
+        if place or agent or book:
+            members, n_filt, n_filt_books = db.class_members_filtered(
+                src, level, value, place or None, agent or None, None, limit,
+                (page_no - 1) * limit, book or None)
+            label = compare.describe(compare.Side(src, level, value, place=place, agent=agent,
+                                                  book=book))
+            filt = dict(label=label.split(" · ", 1)[1] if " · " in label else label, n=n_filt,
+                        n_books=n_filt_books, clear=curl + "#images")
+            order = "year"
+        else:
+            members = db.class_members(src, level, value, order, limit, (page_no - 1) * limit)
+        pages = math.ceil((filt["n"] if filt else row["n"]) / limit)
+        fq = urlencode({k: v for k, v in (("place", place), ("agent", agent), ("book", book))
+                        if v})
+        ctx.update(members=members, filt=filt, order=order, pager=pager(page_no, pages),
+                   base=curl + f"?order={order}" + (f"&{fq}" if fq else ""))
+
+    elif tab == "houses":
+        rows = db.class_book_agents(src, level, value)
+        comp, n_known = composition(rows)
+        params = lending.Params.from_query(request.query_params)
+        lend = lending.analyse_rows(rows, params) if row["plate_key"] else None
+        owners_ok = set(lend.owners) if lend and lend.eligible else set()
+        ctx.update(
+            comp=comp, n_known=n_known, params=params, lend=lend, owners=owners_ok,
+            borrowers=set(lend.borrowers) if lend else set(),
+            lane=swimlane(rows, owners_ok),
+            lend_agents=(db.agents_by_id({e["borrower"] for e in lend.events} | set(lend.owners))
+                         if lend else {}),
+            printer_named=(db.books_naming_printer([e["book_id"] for e in lend.events])
+                           if lend else set()),
+            house_menus={m["agent_id"]: compare.house_menu(curl, src, level, value, m["name"],
+                                                           m["display"])
+                         for role in ("publisher", "printer") for m in comp[role][:8]})
+
+    elif tab == "places":
+        place_mix = place_composition(db.class_book_agents(src, level, value))
+        main_key = place_mix["items"][0]["key"] if place_mix["items"] else None
+        main_name = place_mix["items"][0]["place"] if place_mix["items"] else None
+        ctx.update(places=place_mix,
+                   place_menus={it["key"]: compare.place_menu(curl, src, level, value, it["key"],
+                                                              it["place"], main_key, main_name)
+                                for it in place_mix["items"]})
+
+    elif tab == "designs":
+        pparams = places.Params.from_query(request.query_params)
+        n_designs, contrast, contrast_ex = contrast_rows(src, level, value, group, pparams)
+        ctx.update(n_designs=n_designs, contrast=contrast, contrast_ex=contrast_ex,
+                   pparams=pparams)
+
+    return page(request, "class.html", **ctx)
 
 
 # ================================================================= agents

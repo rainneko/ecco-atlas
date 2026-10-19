@@ -13,17 +13,40 @@
   {% else %}<a href="/book/{{ o.book_id }}">Book {{ o.book_id }}</a>{% endif %}
 </nav>
 
-<div class="orn-layout">
+<div class="orn-two">
+  <div class="orn-left">
   <div class="orn-image">
-    <img src="{{ crop_url(o.oid, 900) }}" alt="Ornament {{ o.label or '' }} on page {{ o.page }}">
+    <a class="orn-zoom" href="{{ crop_url(o.oid, 1400) }}" data-lightbox-single data-oid="{{ o.oid }}" title="Enlarge"><img src="{{ crop_url(o.oid, 900) }}" alt="Ornament {{ o.label or '' }} on page {{ o.page }}"></a>
     <div class="orn-actions">
       {% if can_search %}<form method="post" action="/search/image/from/{{ o.oid }}"><button class="quiet" title="Search the atlas with this ornament's own image">Find similar</button></form>{% endif %}
       <a class="btn quiet" href="/img/page/{{ o.oid }}" target="_blank" rel="noopener">Full page image</a>
       {% if o.book_id and o.page %}<a class="btn quiet" href="{{ viewer_url(o.book_id, o.page) }}" target="_blank" rel="noopener">Open in the ECCO viewer</a>{% endif %}
     </div>
   </div>
-
-  <div class="orn-meta">
+  <section class="orn-similar">
+    <h2>Most similar</h2>
+    <div class="simtabs" role="tablist">
+      {% if has_ann %}<a class="{{ 'on' if sim == 'hier' }}" href="?sim=hier">Annotation</a>{% endif %}
+      {% if has_cl %}<a class="{{ 'on' if sim == 'cluster' }}" href="?sim=cluster">Machine cluster</a>{% endif %}
+      {% if embed_ok %}<a class="{{ 'on' if sim == 'embed' }}" href="?sim=embed">Embedding</a>{% endif %}
+    </div>
+    <p class="note">{% if sim == 'hier' %}Same variant {{ cfg.SIM_SCORES.variant }}{% if o.ann_src and 'subclass' in SOURCES[o.ann_src].levels %}, same subclass {{ cfg.SIM_SCORES.subclass }}{% endif %}, same superclass {{ cfg.SIM_SCORES.superclass }}.{% elif sim == 'cluster' %}Other members of the same machine cluster (score {{ cfg.SIM_SCORES.cluster }}, a placeholder).{% else %}Cosine similarity of the stored image embeddings {{ help('similarity') }}.{% endif %}</p>
+    <div class="simrow" data-lightbox>
+    {% for s in similar %}
+    <figure class="thumb">
+      <a href="/ornament/{{ s.oid }}"><img loading="lazy" src="{{ crop_url(s.oid) }}" alt="{{ s.label or '' }}"></a>
+      <figcaption><b>{{ '%.2f'|format(s.score) }}</b> {{ s.reason }}<br><span class="muted">{{ s.label or '' }}, {{ s.year or 'n.d.' }}</span></figcaption>
+    </figure>
+    {% else %}<p class="muted small">No other images in this class yet.</p>{% endfor %}
+    </div>
+    <div class="orn-actions">
+    {% if spec_cls %}<a class="btn" href="{{ class_url(*spec_cls) }}">See all images of this kind</a>{% endif %}
+    {% if cl %}<a class="btn {{ 'ghost' if spec_cls }}" href="{{ class_url(*cl) }}">See its machine cluster, {{ o.kind }}-{{ o.hc_cluster }}</a>{% endif %}
+    {% if admin and spec_cls %}<a class="btn quiet" href="/admin/workbench/{{ o.ann_src }}/superclass/{{ o.superclass }}">Open {{ o.superclass }} in the workbench</a>{% endif %}
+    </div>
+  </section>
+  </div>
+  <div class="orn-meta orn-right">
     <h1 style="margin-top:0">{{ o.label or 'Unlabelled ornament' }}</h1>
     {% if sup_name and sup_name.name %}<p class="name">{{ humanize(sup_name.name) }}</p>{% endif %}
     <table class="kv">
@@ -58,26 +81,6 @@
       <tr><th>Key</th><td class="small"><code>{{ o.image_id }}</code> + <code>[{{ o.box_key }}]</code></td></tr>
     </table>
     {% if agents %}<p>{% for a in agents %}<a class="chip" href="/agent/{{ a.name }}">{{ a.display_name or a.name }} <i>{{ a.role }}</i></a>{% endfor %}</p>{% endif %}
-  </div>
-
-  <div class="orn-similar">
-    <h2 style="margin-top:0">Most similar</h2>
-    <div class="simtabs" role="tablist">
-      {% if has_ann %}<a class="{{ 'on' if sim == 'hier' }}" href="?sim=hier">Annotation</a>{% endif %}
-      {% if has_cl %}<a class="{{ 'on' if sim == 'cluster' }}" href="?sim=cluster">Machine cluster</a>{% endif %}
-      {% if embed_ok %}<a class="{{ 'on' if sim == 'embed' }}" href="?sim=embed">Embedding</a>{% endif %}
-    </div>
-    <p class="note">{% if sim == 'hier' %}Same variant {{ cfg.SIM_SCORES.variant }}{% if o.ann_src and 'subclass' in SOURCES[o.ann_src].levels %}, same subclass {{ cfg.SIM_SCORES.subclass }}{% endif %}, same superclass {{ cfg.SIM_SCORES.superclass }}.{% elif sim == 'cluster' %}Other members of the same machine cluster (score {{ cfg.SIM_SCORES.cluster }}, a placeholder).{% else %}Cosine similarity of the stored image embeddings {{ help('similarity') }}.{% endif %}</p>
-    {% for s in similar %}
-    <figure class="thumb wide">
-      <a href="/ornament/{{ s.oid }}"><img loading="lazy" src="{{ crop_url(s.oid) }}" alt="{{ s.label or '' }}"></a>
-      <figcaption><b>{{ '%.2f'|format(s.score) }}</b> {{ s.reason }}<br>
-        <span class="muted">{{ s.label or '' }}, {{ s.year or 'n.d.' }}</span></figcaption>
-    </figure>
-    {% else %}<p class="muted small">No other images in this class yet.</p>{% endfor %}
-    {% if spec_cls %}<a class="btn block" href="{{ class_url(*spec_cls) }}">See all images of this kind</a>{% endif %}
-    {% if cl %}<a class="btn block {{ 'ghost' if spec_cls }}" href="{{ class_url(*cl) }}">See its machine cluster, {{ o.kind }}-{{ o.hc_cluster }}</a>{% endif %}
-    {% if admin and spec_cls %}<a class="btn block quiet" href="/admin/workbench/{{ o.ann_src }}/superclass/{{ o.superclass }}">Open {{ o.superclass }} in the workbench</a>{% endif %}
   </div>
 </div>
 

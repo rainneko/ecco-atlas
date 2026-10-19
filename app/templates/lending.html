@@ -32,8 +32,8 @@
   {% for e in events %}
   {% set rv = reviews.get((e.plate, e.owner_ids, e.borrower, e.book_id)) %}
   <tr>
-    <td class="mini"><a href="{{ plate_url(e.plate) }}"><img loading="lazy" src="{{ crop_url(e.info.exemplar) }}" alt=""></a></td>
-    <td class="nowrap">{{ kdot(e.info.kind) }}<a href="{{ plate_url(e.plate) }}">{{ plate_label(e.plate) }}</a>{% if e.info.t_owned %} <span class="tag t-own">T</span>{% endif %}
+    <td class="mini"><a href="{{ plate_url(e.plate) }}?tab=houses#lending"><img loading="lazy" src="{{ crop_url(e.info.exemplar) }}" alt=""></a></td>
+    <td class="nowrap">{{ kdot(e.info.kind) }}<a href="{{ plate_url(e.plate) }}?tab=houses#lending">{{ plate_label(e.plate) }}</a>{% if e.info.t_owned %} <span class="tag t-own">T</span>{% endif %}
       <div class="muted small">{{ e.n_known }} books</div></td>
     <td>{% for o in e.owners %}<a href="/agent/{{ ag[o].name }}">{{ ag[o].display_name }}</a> <span class="muted small">{{ pct(e.owner_shares[loop.index0]) }}</span>{{ ' + ' if not loop.last }}{% endfor %}</td>
     <td><a href="/agent/{{ ag[e.borrower].name }}">{{ ag[e.borrower].display_name }}</a> <span class="muted small">{{ pct(e.borrower_share) }}</span>

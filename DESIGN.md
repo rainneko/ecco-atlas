@@ -1,16 +1,26 @@
 # ECCO Ornament Atlas — Design Document
 
-Version 2.5 · supersedes v2.4. v2.0 covered all seven data sources; v2.1 added
+Version 2.6 · supersedes v2.5. v2.0 covered all seven data sources; v2.1 added
 **image search** (§9), **places of publication and reprint analysis** (§12),
 the front-page scope, glossary, publications and people (§13), a fix to the
 book-search cost (§4.7), and small layout changes (§5.2). v2.5 changes the
 **wording of the imprint analysis** (the former "lending", §4.5), protects the
 **image server** (§6), makes the site run without embeddings (§9.0), and fixes
-a list of bugs (§14).
+a list of bugs (§14). v2.6 splits the class page into **tabs** (§5.6), adds an
+**image viewer** (lightbox) to every gallery, and puts the ornament page in
+**two columns** (§5.4).
 
 ---
 
 ## 0. What changed, and why
+
+### 0.00 v2.5 → v2.6 (October 2026)
+
+| Request | Decision |
+|---|---|
+| Class pages are long; the images and the analyses compete for the same scroll | Five tabs: **Images · Who used it · Where and when · Designs · Related**. The tab is a URL parameter (`?tab=houses`), so every view can be linked. Each tab runs only its own queries; a tab with nothing to show is not offered (§5.6). Old section links (`#lending`, `#map`, `#places`) open the right tab. |
+| Looking closely at a block means opening one ornament page after another | A **lightbox** on every gallery of ornaments: click an image, ←/→ move through the images in the gallery's order (date order on class pages), Esc closes. Ctrl/⌘-click still opens the ornament page. The 1400 px crop is loaded on demand, and only the next image is preloaded (§6). |
+| The ornament page's third column squeezed the similar images to 270 px | **Two columns**: image, actions and the three most similar images on the left; the record on the right (§5.4). |
 
 ### 0.0 v2.4 → v2.5 (September 2026)
 
@@ -559,9 +569,13 @@ and say nothing about two particular books (v2.5).
 
 ### 5.4 `/ornament/{oid}` — Ornament detail
 
-Three columns: image; record (human label, machine cluster, book); most
-similar (hierarchy / cluster / embedding when available). Below: the report
-form, with a hidden honeypot field and a per-address limit (v2.5).
+Two columns (v2.6). **Left**: the 900 px image (click to enlarge to 1400 px),
+the actions (Find similar, full page, ECCO viewer), and **Most similar** as a
+row of three images with score and reason, with its method switch
+(hierarchy / cluster / embedding when available) and the links to the class
+and the cluster. **Right**: the record (human label, machine cluster, book).
+Below 980 px the columns stack. Below both: the report form, with a hidden
+honeypot field and a per-address limit (v2.5).
 
 **Find similar** (v2.5) uses the ornament's **stored vector** when there is
 one: no page download, no model run. Without a stored vector it falls back to
@@ -576,8 +590,28 @@ columns: thumb · class · images · books · first year · last year · span.
 
 ### 5.6 `/class/{source}/{level}/{value}` — Class detail
 
-1. **Header**: label, formal name, breadcrumb, key numbers, exemplar.
-2. **Who used it** (v2.5):
+**Header** (always): label, formal name, breadcrumb, key numbers, exemplar,
+*Compare with…*, *Map through time* (opens the Where and when tab at the map),
+workbench link for admins.
+
+**Tabs** (v2.6). `?tab=` selects one; the default is Images. Each tab runs only
+the queries it needs; the header and the tab bar need only cheap ones (class
+row, names, structure, cluster links, cross-reference). A tab with nothing to
+show is not offered: Designs only when the class has designs below or beside
+it, or linked clusters; Related only when there are cluster links or a
+cross-reference. A filter (`place=`, `agent=`, `book=`) always shows Images.
+
+| Tab | Content |
+|---|---|
+| **Images** | all images by year or grouped; filter chip; pager; lightbox |
+| **Who used it** | publisher and printer bars, houses through time, books under other imprints |
+| **Where and when** | the place pie, first and last year, the map through time |
+| **Designs** | designs below (or sibling variants), places by design, other designs in the superclass |
+| **Related** | related clusters, human labels ↔ clusters |
+
+Contents of the tabs, as designed in v2.5:
+
+1. **Who used it** (v2.5):
    - **Publishers** and **printers**: one bar per house, bar length = share of
      books naming a publisher (resp. printer); top 8 and "N more houses, each
      in x % of books or fewer". Main house marked *main house*, other houses in
@@ -588,12 +622,18 @@ columns: thumb · class · images · books · first year · last year · span.
      is a pale band. A **hollow dot** is a book that names neither main house.
      Under it, for plate-level classes, the list of those books with their
      time position and the *trade publisher?* tag; no verdict.
-3. **Map through time** (§12.9), opened on demand.
-4. **Related clusters** (cluster pages, when links exist).
-5. **Places by design** (§12.3), no longer folded.
-6. **Cross-reference** human labels ↔ clusters.
-7. **Structure**: sub-designs / sibling variants; sidebar with other subclasses.
-8. **All images**, by year or grouped.
+2. **Map through time** (§12.9), opened on demand.
+3. **Related clusters** (cluster pages, when links exist).
+4. **Places by design** (§12.3), no longer folded.
+5. **Cross-reference** human labels ↔ clusters.
+6. **Structure**: sub-designs / sibling variants; other subclasses.
+7. **All images**, by year or grouped.
+
+**Lightbox** (v2.6, all galleries of ornaments): click an image to see it at
+1400 px with its caption, *Open the ornament page* and *Full page image*.
+← and → move through the gallery, Esc closes, swipe works on phones; at the
+end of a page a link leads to the next page of images. Only the image opens the
+viewer; captions and ctrl/⌘-clicks are ordinary links.
 
 ### 5.7 Publishers & printers
 
@@ -657,6 +697,8 @@ download from a colleague's server. Before v2.5 a cold `/classes` page meant
   `/lending`, `/reprints` and sorted variants.
 - **Lighter pages**: book pairs show 3 shared blocks per pair; the workbench
   uses 300 px.
+- **Lightbox** (v2.6): the 1400 px crop is fetched only when an image is
+  opened, and only the next image is preloaded, after 0.7 s.
 - **Bulk jobs** (`etl.fetch_crops`) use the same limits; run them at night with
   `IMAGE_MAX_RPS=1`, and tell the colleague first.
 - Responses under `/img/` are not gzip-compressed (JPEG does not shrink).
@@ -679,7 +721,7 @@ GET  /book/{book_id}?src=                     book detail
 GET  /ornament/{oid}?sim=hier|cluster|embed   ornament detail
 POST /ornament/{oid}/report                   suggest a correction
 GET  /classes?tax=SRC:LEVEL&q=&sort=&dir=&p=  browse classes
-GET  /class/{src}/{level}/{value}?order=&p=   class detail
+GET  /class/{src}/{level}/{value}?tab=&order=&p=   class detail (tab: images|houses|places|designs|related)
 GET  /agents?q=&src=&sort=                    publishers & printers
 GET  /agent/{name}?src=&view=used|owned&joint= house detail
 GET  /agents/pair/{a}/{b}?src=&p=             two houses
@@ -826,7 +868,8 @@ New in v2.5:
 18. **"plate" vs "block"** in the interface: book historians use *plate* for
     intaglio; the running text now says *block*.
 19. **Concurrent refresh** after loads, so the site does not pause (§3.8).
-20. **Class page tabs and an image lightbox** (proposed, not yet built).
+20. ~~Class page tabs and an image lightbox~~ — done in v2.6 (§5.6). Open:
+    whether *Who used it* should be the default tab instead of *Images*.
 
 ---
 
@@ -900,12 +943,12 @@ negation, aligned design table, images, click menus.
 Unchanged: coastlines only, circles ∝ books, arcs "next found here", slider,
 cumulative or ±5-year window, table view, no third-party requests.
 
-### 12.10 Class page sections (v2.5)
+### 12.10 Class page sections (v2.5, v2.6)
 
 v2.4 folded *Lending* and *Places by design*; both were core content hidden
-as appendices. v2.5 shows them open, in the new forms of §5.6 and §12.3.
-Proposed next step: tabs (Images · Who used it · Where & when · Designs ·
-Related), each loading only its own data (§11, question 20).
+as appendices. v2.5 showed them open, in the new forms of §5.6 and §12.3.
+v2.6 puts them in tabs (Images · Who used it · Where and when · Designs ·
+Related), each loading only its own data (§5.6).
 
 ---
 

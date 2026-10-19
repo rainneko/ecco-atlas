@@ -5,8 +5,9 @@ Online: which ornaments appear in which books, how human classes and machine
 clusters relate, under whose imprints each block appears, and which books
 carry a block under an unusual imprint.
 
-The full specification is **[DESIGN.md](DESIGN.md)** (v2.5). What changed in
-v2.5 and how to deploy it: **[CHANGES_v2.5.md](CHANGES_v2.5.md)**.
+The full specification is **[DESIGN.md](DESIGN.md)** (v2.6). What changed and how
+to deploy it: **[CHANGES_v2.6.md](CHANGES_v2.6.md)** and
+**[CHANGES_v2.5.md](CHANGES_v2.5.md)**.
 
 ## Run locally
 
@@ -76,7 +77,8 @@ app/embedding.py   image search: preprocessing, extractor, type check, class ran
 app/places.py      place profiles per design and their contrast
 app/compare.py     comparison sides, design alignment, click menus
 app/static/geomap.js  map through time (d3 + Natural Earth coastlines, vendored)
-app/static/v25.css    v2.5 styles, loaded after style.css
+app/static/v25.css    v2.5 and v2.6 styles, loaded after style.css
+app/static/v26.js     image lightbox; old section links to class-page tabs
 app/main.py        routes
 app/templates/     Jinja2 pages
 app/static/        CSS, JS, fonts, hero image, logos/
@@ -88,6 +90,7 @@ etl/load_embeddings.py  load emb_<KIND>.npz files, build centroids
 etl/link_clusters.py    stored similarity between machine clusters
 etl/data/          HP superclass names (C001–C172)
 tests/             unit tests and fixture generator
+tools/descriptive_stats.py  descriptive statistics for papers (books.csv, by_decade.csv, paragraph.md)
 ```
 
 ## Logos
